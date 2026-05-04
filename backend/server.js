@@ -304,7 +304,7 @@ app.post('/api/check/dictionary-dumps', async (req, res) => {
 app.post('/api/check/table-instantiation', async (req, res) => {
   let connection;
   try {
-    const { tableOwner, tableNames, dbConfig } = req.body;
+    const { tables, dbConfig } = req.body;
 
     // Use the provided dbConfig or fall back to the legacy pool
     let poolToUse = pool;
@@ -319,17 +319,19 @@ app.post('/api/check/table-instantiation', async (req, res) => {
       });
     }
 
-    const tableList = tableNames.split(',').map(t => `'${t.trim()}'`).join(',');
+    const tablePairs = tables.split(';').map(t => {
+      const [owner, table] = t.trim().split('.');
+      return `('${owner.trim().toUpperCase()}', '${table.trim().toUpperCase()}')`;
+    }).join(', ');
 
     const query = `
       SELECT TABLE_OWNER, TABLE_NAME, TIMESTAMP, scn as SCN_TO_START_TABLE
       FROM dba_capture_prepared_tables
-      WHERE table_owner = :tableOwner
-        AND table_name IN (${tableList})
+      WHERE (TABLE_OWNER, TABLE_NAME) IN (${tablePairs})
     `;
 
     connection = await poolToUse.getConnection();
-    const result = await connection.execute(query, { tableOwner }, {
+    const result = await connection.execute(query, {}, {
       outFormat: oracledb.OUT_FORMAT_OBJECT,
       maxRows: 1000
     });
@@ -353,7 +355,7 @@ app.post('/api/check/table-instantiation', async (req, res) => {
 app.post('/api/check/scn-validation', async (req, res) => {
   let connection;
   try {
-    const { tableOwner, tableNames, dbConfig } = req.body;
+    const { tables, dbConfig } = req.body;
 
     // Use the provided dbConfig or fall back to the legacy pool
     let poolToUse = pool;
@@ -368,17 +370,19 @@ app.post('/api/check/scn-validation', async (req, res) => {
       });
     }
 
-    const tableList = tableNames.split(',').map(t => `'${t.trim()}'`).join(',');
+    const tablePairs = tables.split(';').map(t => {
+      const [owner, table] = t.trim().split('.');
+      return `('${owner.trim().toUpperCase()}', '${table.trim().toUpperCase()}')`;
+    }).join(', ');
 
     const query = `
       SELECT MAX(SCN) as MAX_SCN
       FROM DBA_CAPTURE_PREPARED_TABLES
-      WHERE TABLE_OWNER = :tableOwner
-        AND TABLE_NAME IN (${tableList})
+      WHERE (TABLE_OWNER, TABLE_NAME) IN (${tablePairs})
     `;
 
     connection = await poolToUse.getConnection();
-    const result = await connection.execute(query, { tableOwner }, {
+    const result = await connection.execute(query, {}, {
       outFormat: oracledb.OUT_FORMAT_OBJECT
     });
 
@@ -1066,6 +1070,54 @@ app.post('/api/striim-mon-command', async (req, res) => {
   }
 });
 
+// OJET Queries - Recovery Checkpoint and SCN Tracking
+app.post('/api/ojet-queries/checkpoint-scn', async (req, res) => {
+  let connection;
+  try {
+    const { host, port, sid, username, password } = req.body;
+
+    const poolToUse = await getOrCreatePool({ host, port, sid, username, password });
+
+    connection = await poolToUse.getConnection();
+
+    const query = `SELECT
+    capture_name,
+    captured_scn,
+    applied_scn,
+    (captured_scn - applied_scn) AS captured_apply_diff,
+    required_checkpoint_scn,
+    (captured_scn - required_checkpoint_scn) AS checkpoint_gap,
+    CASE
+        -- If GAP is > 2000000, checkpoint is way behind
+        WHEN (captured_scn - required_checkpoint_scn) > 2000000 THEN '🟡 YELLOW: STALE CHECKPOINT (LONG TXN?)'
+        ELSE '🟢 GREEN: CHECKPOINT MOVING'
+    END AS checkpoint_health
+FROM dba_capture
+WHERE client_status = 'ATTACHED'`;
+
+    const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+
+    res.json({
+      success: true,
+      results: result.rows
+    });
+  } catch (error) {
+    console.error('Error executing checkpoint SCN query:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (err) {
+        console.error('Error closing connection:', err);
+      }
+    }
+  }
+});
+
 // OJET Queries - Capture Process Status
 app.post('/api/ojet-queries/capture-status', async (req, res) => {
   let connection;
@@ -1077,10 +1129,32 @@ app.post('/api/ojet-queries/capture-status', async (req, res) => {
 
     connection = await poolToUse.getConnection();
 
-    const query = `SELECT CAPTURE_NAME, QUEUE_OWNER, CAPTURE_USER,
-       START_SCN, CAPTURED_SCN, APPLIED_SCN, SOURCE_DATABASE, CAPTURE_TYPE, ERROR_MESSAGE,
-       FIRST_SCN, REQUIRED_CHECKPOINT_SCN, STATUS
-FROM DBA_CAPTURE`;
+    const query = `SELECT
+    cp.capture_name,
+    cp.status,
+    vc.state,
+    ROUND((vc.capture_time - vc.capture_message_create_time) * 86400) AS lag_sec,
+    cp.start_scn,
+    cp.captured_scn,
+    cp.applied_scn,
+    (cp.captured_scn - cp.applied_scn) AS captured_apply_diff,
+    vc.total_messages_captured AS tot_lcr,
+    ROUND(vc.bytes_of_redo_mined / 1024 / 1024) AS redo_mined_mb,
+        CASE
+        -- 1. Check for fatal crashes or stopped processes
+        WHEN cp.status IN ('ABORTED', 'DISABLED') THEN '🔴 RED: PROCESS ' || cp.status
+        WHEN cp.error_message IS NOT NULL THEN '🔴 RED: ERROR DETECTED'
+        -- 2. Check for severe latency (Math: Capture Time - Create Time)
+        WHEN ROUND((vc.capture_time - vc.capture_message_create_time) * 86400) > 1800 THEN '🔴 RED: CRITICAL LAG'
+        WHEN ROUND((vc.capture_time - vc.capture_message_create_time) * 86400) > 300 THEN '🟡 YELLOW: HIGH LAG'
+        -- 3. Check physical state
+        WHEN vc.state = 'WAITING FOR TRANSACTION' THEN '🟢 GREEN: HEALTHY (IDLE)'
+        ELSE '🟢 GREEN: HEALTHY (ACTIVE)'
+    END AS capture_health,
+    substr(cp.error_message,1,35) as error
+FROM dba_capture cp
+LEFT JOIN v$xstream_capture vc ON cp.capture_name = vc.capture_name
+ORDER BY ROUND((vc.capture_time - vc.capture_message_create_time) * 86400) DESC`;
 
     const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
@@ -1090,6 +1164,180 @@ FROM DBA_CAPTURE`;
     });
   } catch (error) {
     console.error('Error executing capture status query:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (err) {
+        console.error('Error closing connection:', err);
+      }
+    }
+  }
+});
+
+// OJET Queries - Interested LCR (Capture Process Memory Usage)
+app.post('/api/ojet-queries/interested-lcr', async (req, res) => {
+  let connection;
+  try {
+    const { host, port, sid, username, password } = req.body;
+
+    const poolToUse = await getOrCreatePool({ host, port, sid, username, password });
+
+    connection = await poolToUse.getConnection();
+
+    const query = `SELECT
+    CAPTURE_NAME,
+    STATE,
+    TOTAL_MESSAGES_CAPTURED, total_messages_enqueued AS total_enqueued,
+    diff_capture_enq,
+    ALLOCATED_MB,
+    USED_MB,
+    MEM_UTIL_PCT,
+    LAG_SEC,
+    CASE
+        -- 🔴 RED FLAGS
+        WHEN STATE = 'ABORTED' THEN '🔴 RED: PROCESS DEAD'
+        WHEN LAG_SEC > 1800 THEN '🔴 RED: CRITICAL EXTRACTION LAG'
+        WHEN MEM_UTIL_PCT > 95 THEN '🔴 RED: MEMORY EXHAUSTION (SPILLING)'
+        -- 🟡 YELLOW FLAGS
+        WHEN STATE = 'PAUSED' THEN '🟡 YELLOW: FLOW CONTROL (BACKPRESSURE)'
+        WHEN LAG_SEC > 300 THEN '🟡 YELLOW: LATENCY DETECTED'
+        WHEN MEM_UTIL_PCT > 80 THEN '🟡 YELLOW: HIGH MEMORY LOAD'
+        -- 🟢 GREEN
+        WHEN LAG_SEC < 60 AND STATE LIKE 'WAITING%' THEN '🟢 GREEN: IDLE and CURRENT'
+        ELSE '🟢 GREEN: ACTIVE'
+    END AS ENGINE_HEALTH_STATUS
+FROM (
+    SELECT CAPTURE_NAME, STATE, TOTAL_MESSAGES_CAPTURED, total_messages_enqueued,
+         -- The Difference is Messages not sent to Enqueued
+         (total_messages_captured - total_messages_enqueued) AS diff_capture_enq,
+           -- Memory Reserved in Streams Pool
+           ROUND(SGA_ALLOCATED / 1024 / 1024, 2) AS ALLOCATED_MB,
+           ---- Real Memory used for this Process
+           ROUND(SGA_USED / 1024 / 1024, 2) AS USED_MB,
+           ROUND((SGA_USED / NULLIF(SGA_ALLOCATED, 0)) * 100, 2) AS MEM_UTIL_PCT,
+           ROUND((CAPTURE_TIME - CAPTURE_MESSAGE_CREATE_TIME) * 86400) AS LAG_SEC
+    FROM V$XSTREAM_CAPTURE
+)`;
+
+    const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+
+    res.json({
+      success: true,
+      results: result.rows
+    });
+  } catch (error) {
+    console.error('Error executing interested LCR query:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (err) {
+        console.error('Error closing connection:', err);
+      }
+    }
+  }
+});
+
+// OJET Queries - Outbound Server (Dispatcher)
+app.post('/api/ojet-queries/outbound-server', async (req, res) => {
+  let connection;
+  try {
+    const { host, port, sid, username, password } = req.body;
+
+    const poolToUse = await getOrCreatePool({ host, port, sid, username, password });
+
+    connection = await poolToUse.getConnection();
+
+    const query = `SELECT
+    vo.server_name AS pipeline,
+    vc.state AS cap_state,
+    vo.state AS out_state,
+    vc.total_messages_enqueued AS enqueued,
+    vo.total_messages_sent AS sent,
+    (vc.total_messages_enqueued - vo.total_messages_sent) AS in_transit,
+    ROUND(vo.bytes_sent / 1024 / 1024) AS mb_sent,
+    ROUND((vc.capture_time - vc.capture_message_create_time) * 86400) AS lag_sec,
+    TO_CHAR(vo.last_sent_message_create_time, 'DD-MON HH24:MI:SS') AS last_msg,
+    CASE
+        -- 1. Hard Crashes
+        WHEN vo.state IN ('ABORTED', 'DISABLED') THEN '🔴 RED: SERVER DOWN'
+        -- 2. Critical Latency
+        WHEN ROUND((vc.capture_time - vc.capture_message_create_time) * 86400) > 1800 THEN '🔴 RED: CRITICAL LAG'
+        -- 3. Communication Bottlenecks (Striim/Network is slow)
+        WHEN vo.state = 'WAITING FOR CLIENT' THEN '🟡 YELLOW: STRIIM IS SLOW'
+        WHEN vo.state = 'FLOW CONTROL' THEN '🟡 YELLOW: BOTTLENECK / BACKPRESSURE'
+        -- 4. Creeping Latency or Massive Backlog
+        WHEN ROUND((vc.capture_time - vc.capture_message_create_time) * 86400) > 300 THEN '🟡 YELLOW: HIGH LAG'
+        WHEN (vc.total_messages_enqueued - vo.total_messages_sent) > 500000 AND vo.state != 'IDLE' THEN '🟡 YELLOW: HUGE BACKLOG'
+        -- 5. Everything is fine
+        WHEN vo.state = 'IDLE' THEN '🟢 GREEN: HEALTHY (IDLE)'
+        ELSE '🟢 GREEN: DATA FLOWING'
+    END AS outbound_health
+FROM v$xstream_capture vc
+JOIN dba_xstream_outbound dxo ON vc.capture_name = dxo.capture_name
+JOIN v$xstream_outbound_server vo ON dxo.server_name = vo.server_name`;
+
+    const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+
+    res.json({
+      success: true,
+      results: result.rows
+    });
+  } catch (error) {
+    console.error('Error executing outbound server query:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (err) {
+        console.error('Error closing connection:', err);
+      }
+    }
+  }
+});
+
+// OJET Queries - Long Running Transactions
+app.post('/api/ojet-queries/long-running-transactions', async (req, res) => {
+  let connection;
+  try {
+    const { host, port, sid, username, password } = req.body;
+
+    const poolToUse = await getOrCreatePool({ host, port, sid, username, password });
+
+    connection = await poolToUse.getConnection();
+
+    const query = `SELECT
+    s.username,
+    s.machine,
+    xt.transaction_id,
+    xt.total_message_count,
+    TO_CHAR(xt.first_message_time, 'YYYY-MM-DD HH24:MI:SS') AS start_time
+FROM v$xstream_transaction xt
+JOIN v$transaction t ON xt.transaction_id = t.xidusn || '.' || t.xidslot || '.' || t.xidsqn
+JOIN v$session s ON t.ses_addr = s.saddr
+WHERE xt.total_message_count > 1000`;
+
+    const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+
+    res.json({
+      success: true,
+      results: result.rows
+    });
+  } catch (error) {
+    console.error('Error executing long running transactions query:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -1115,10 +1363,25 @@ app.post('/api/ojet-queries/propagation-receiver', async (req, res) => {
 
     connection = await poolToUse.getConnection();
 
-    const query = `SELECT TOTAL_MSGS,
-       TO_CHAR(HIGH_WATER_MARK) AS HIGHEST_MESS_SCN_RECEIVED,
-       TO_CHAR(ACKNOWLEDGEMENT) AS HIGHEST_MESS_ACKNOWLEDGE_TO_SENDER,
-       STATE
+    const query = `SELECT
+    INST_ID,
+    TO_CHAR(HIGH_WATER_MARK) AS HIGHEST_MESS_SCN_RECEIVED,
+    TO_CHAR(ACKNOWLEDGEMENT) AS HIGHEST_MESS_ACKNOWLEDGE_TO_SENDER,
+    (HIGH_WATER_MARK - ACKNOWLEDGEMENT) AS UNACKNOWLEDGED_SCN_GAP,
+    STATE,
+    CASE
+        -- 1. Memory and client errors first (Highest priority)
+        WHEN STATE LIKE '%Waiting for Memory%' THEN '🔴 RED: MEMORY PRESSURE'
+        WHEN STATE LIKE '%Waiting for Client%' THEN '🟡 YELLOW: DOWNSTREAM BUSY'
+        -- 2. THE FIX: If it's idle and waiting, it is GREEN regardless of the SCN GAP (Ignores Phantom Gap)
+        WHEN STATE = 'Waiting for message from propagation sender' THEN '🟢 GREEN: HEALTHY (IDLE)'
+        -- 3. If it is NOT idle and actively processing, THEN we check if the gap is too high
+        WHEN (HIGH_WATER_MARK - ACKNOWLEDGEMENT) > 150000 THEN '🔴 RED: CRITICAL BACKLOG'
+        WHEN (HIGH_WATER_MARK - ACKNOWLEDGEMENT) > 80000 THEN '🟡 YELLOW: NETWORK LATENCY'
+        -- 4. If it's actively processing and the gap is low/normal
+        WHEN STATE IN ('Waiting for message', 'Processing message') THEN '🟢 GREEN: HEALTHY (ACTIVE)'
+        ELSE '⚪ UNKNOWN STATE'
+    END AS NETWORK_HEALTH_STATUS
 FROM GV$PROPAGATION_RECEIVER`;
 
     const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
@@ -1144,90 +1407,6 @@ FROM GV$PROPAGATION_RECEIVER`;
   }
 });
 
-// OJET Queries - Capture Process Memory Usage
-app.post('/api/ojet-queries/capture-memory', async (req, res) => {
-  let connection;
-  try {
-    const { host, port, sid, username, password } = req.body;
-
-    const poolToUse = await getOrCreatePool({ host, port, sid, username, password });
-
-    connection = await poolToUse.getConnection();
-
-    const query = `SELECT CAPTURE_NAME, STATE,
-       TOTAL_MESSAGES_CAPTURED,
-       ROUND(SGA_USED / 1024 / 1024, 2) AS USED_MB,
-       ROUND(SGA_ALLOCATED / 1024 / 1024, 2) AS ALLOCATED_MB,
-       ROUND((SGA_USED / NULLIF(SGA_ALLOCATED, 0)) * 100, 2) AS MEM_UTIL_PCT,
-       ROUND((SYSDATE - CAPTURE_TIME) * 86400, 0) AS LAG_SEC
-FROM V$XSTREAM_CAPTURE`;
-
-    const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
-
-    res.json({
-      success: true,
-      results: result.rows
-    });
-  } catch (error) {
-    console.error('Error executing capture memory query:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  } finally {
-    if (connection) {
-      try {
-        await connection.close();
-      } catch (err) {
-        console.error('Error closing connection:', err);
-      }
-    }
-  }
-});
-
-// OJET Queries - Apply Process Memory Usage
-app.post('/api/ojet-queries/apply-memory', async (req, res) => {
-  let connection;
-  try {
-    const { host, port, sid, username, password } = req.body;
-
-    const poolToUse = await getOrCreatePool({ host, port, sid, username, password });
-
-    connection = await poolToUse.getConnection();
-
-    const query = `SELECT r.INST_ID, ap.APPLY_NAME, r.STATE,
-       r.TOTAL_MESSAGES_DEQUEUED AS MSGS_TO_STRIIM,
-       ROUND(r.SGA_USED / 1024 / 1024, 2) AS USED_MB,
-       ROUND(r.SGA_ALLOCATED / 1024 / 1024, 2) AS ALLOC_MB,
-       ROUND((r.SGA_USED / NULLIF(r.SGA_ALLOCATED, 0)) * 100, 2) AS MEM_UTIL_PCT
-FROM GV$XSTREAM_APPLY_READER r
-JOIN GV$SESSION s ON (r.SID = s.SID AND r.SERIAL# = s.SERIAL# AND r.INST_ID = s.INST_ID)
-JOIN DBA_APPLY ap ON (r.APPLY_NAME = ap.APPLY_NAME)
-ORDER BY r.INST_ID, ap.APPLY_NAME`;
-
-    const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
-
-    res.json({
-      success: true,
-      results: result.rows
-    });
-  } catch (error) {
-    console.error('Error executing apply memory query:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  } finally {
-    if (connection) {
-      try {
-        await connection.close();
-      } catch (err) {
-        console.error('Error closing connection:', err);
-      }
-    }
-  }
-});
-
 // OJET Queries - Streams Pool Memory Usage
 app.post('/api/ojet-queries/streams-pool', async (req, res) => {
   let connection;
@@ -1238,10 +1417,26 @@ app.post('/api/ojet-queries/streams-pool', async (req, res) => {
 
     connection = await poolToUse.getConnection();
 
-    const query = `SELECT ROUND(CURRENT_SIZE / 1024 / 1024, 2) AS STREAM_POOL_TOTAL_MB,
-       ROUND((CURRENT_SIZE - TOTAL_MEMORY_ALLOCATED) / 1024 / 1024, 2) AS STREAM_POOL_FREE_MB,
-       ROUND((TOTAL_MEMORY_ALLOCATED / NULLIF(CURRENT_SIZE, 0)) * 100, 2) AS STREAM_POOL_USAGE_PCT
-FROM V$STREAMS_POOL_STATISTICS`;
+    const query = `SELECT
+    STREAM_POOL_TOTAL_MB,
+    STREAM_POOL_FREE_MB,
+    STREAM_POOL_USAGE_PCT,
+    CASE
+        -- 🔴 RED FLAGS
+        WHEN STREAM_POOL_USAGE_PCT > 95 THEN '🔴 RED: MEMORY EXHAUSTION (DANGER)'
+        WHEN STREAM_POOL_FREE_MB < 50 THEN '🔴 RED: CRITICAL FREE SPACE'
+        -- 🟡 YELLOW FLAGS
+        WHEN STREAM_POOL_USAGE_PCT > 80 THEN '🟡 YELLOW: HIGH UTILIZATION (MONITOR)'
+        WHEN STREAM_POOL_TOTAL_MB < 512 THEN '🟡 YELLOW: POOL MAY BE TOO SMALL FOR XSTREAM'
+        -- 🟢 GREEN
+        ELSE '🟢 GREEN: HEALTHY BUFFER'
+    END AS POOL_HEALTH_STATUS
+FROM (
+    SELECT ROUND(CURRENT_SIZE / 1024 / 1024, 2) AS STREAM_POOL_TOTAL_MB,
+           ROUND((CURRENT_SIZE - TOTAL_MEMORY_ALLOCATED) / 1024 / 1024, 2) AS STREAM_POOL_FREE_MB,
+           ROUND((TOTAL_MEMORY_ALLOCATED / NULLIF(CURRENT_SIZE, 0)) * 100, 2) AS STREAM_POOL_USAGE_PCT
+    FROM V$STREAMS_POOL_STATISTICS
+)`;
 
     const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
@@ -1305,8 +1500,8 @@ ORDER BY NAME`;
   }
 });
 
-// OJET Queries - Transactions Being Processed
-app.post('/api/ojet-queries/transactions-processing', async (req, res) => {
+// OJET Queries - Finding "Holes" on Arch Log Shipping
+app.post('/api/ojet-queries/arch-log-holes', async (req, res) => {
   let connection;
   try {
     const { host, port, sid, username, password } = req.body;
@@ -1315,12 +1510,18 @@ app.post('/api/ojet-queries/transactions-processing', async (req, res) => {
 
     connection = await poolToUse.getConnection();
 
-    const query = `SELECT COMPONENT_NAME, COMPONENT_TYPE,
-       (XIDUSN || '.' || XIDSLT || '.' || XIDSQN) AS TRAN_ID,
-       CUMULATIVE_MESSAGE_COUNT,
-       TOTAL_MESSAGE_COUNT,
-       FIRST_MESSAGE_POSITION
-FROM V$XSTREAM_TRANSACTION`;
+    const query = `SELECT
+    SOURCE_DATABASE,
+    THREAD#,
+    SEQUENCE# + 1 AS MISSING_START,
+    NEXT_SEQ - 1 AS MISSING_END,
+    (NEXT_SEQ - SEQUENCE# - 1) AS TOTAL_MISSING_IN_HOLE
+FROM (
+    SELECT DISTINCT SOURCE_DATABASE, THREAD#, SEQUENCE# ,
+           LEAD(SEQUENCE#) OVER (PARTITION BY SOURCE_DATABASE, THREAD# ORDER BY SEQUENCE#) AS NEXT_SEQ
+    FROM DBA_REGISTERED_ARCHIVED_LOG
+)
+WHERE NEXT_SEQ - SEQUENCE# > 1`;
 
     const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
@@ -1329,7 +1530,53 @@ FROM V$XSTREAM_TRANSACTION`;
       results: result.rows
     });
   } catch (error) {
-    console.error('Error executing transactions processing query:', error);
+    console.error('Error executing arch log holes query:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (err) {
+        console.error('Error closing connection:', err);
+      }
+    }
+  }
+});
+
+// OJET Queries - Archive Logs Safe to Delete
+app.post('/api/ojet-queries/arch-log-cleanup', async (req, res) => {
+  let connection;
+  try {
+    const { host, port, sid, username, password } = req.body;
+
+    const poolToUse = await getOrCreatePool({ host, port, sid, username, password });
+
+    connection = await poolToUse.getConnection();
+
+    const query = `SELECT
+    l.SEQUENCE#,
+    l.NAME,
+    l.NEXT_SCN,c.CAPTURE_NAME,
+    CASE
+        WHEN l.NEXT_SCN < c.REQUIRED_CHECKPOINT_SCN THEN 'SAFE_TO_DELETE'
+        ELSE 'KEEP_-_CAPTURE_NEEDS_THIS'
+    END AS ACTION
+FROM DBA_REGISTERED_ARCHIVED_LOG l, DBA_CAPTURE c
+WHERE c.CAPTURE_NAME like 'STRIIM$%'
+ORDER BY l.SEQUENCE# DESC
+FETCH FIRST 100 ROWS ONLY`;
+
+    const result = await connection.execute(query, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+
+    res.json({
+      success: true,
+      results: result.rows
+    });
+  } catch (error) {
+    console.error('Error executing arch log cleanup query:', error);
     res.status(500).json({
       success: false,
       message: error.message

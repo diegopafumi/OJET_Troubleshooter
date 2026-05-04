@@ -6,6 +6,17 @@ import CheckCard from './CheckCard'
 function Dashboard({ dbConfig, setDbConfig, isConnected, setIsConnected }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
+  const [calcAvgRowLength, setCalcAvgRowLength] = useState('')
+  const [calcRowChanges, setCalcRowChanges] = useState('')
+
+  const avgRowLength = parseFloat(calcAvgRowLength) || 0
+  const rowChanges = parseFloat(calcRowChanges) || 0
+  const hasCalcInputs = avgRowLength > 0 && rowChanges > 0
+  const rawDataSizeGB = hasCalcInputs
+    ? Math.round((2.16 * (rowChanges / 1000000) + (avgRowLength * rowChanges) / (1024 * 1024 * 1024)) * 10) / 10
+    : null
+  const minStreamsPoolGB = rawDataSizeGB !== null ? rawDataSizeGB * 1.10 : null
+  const txBufferSpillover = rowChanges > 0 ? Math.round(rowChanges * 1.25) : null
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
@@ -60,7 +71,7 @@ ORDER BY SEQUENCE# DESC;`
     {
       id: 'take-dictionary-dump',
       title: 'Take Dictionary Dump',
-      description: 'Execute DBMS_LOGMNR_D.BUILD to create a new dictionary dump, if needed.',
+      description: 'Execute DBMS_LOGMNR_D.BUILD to create a new dictionary dump. If this is RAC, Execute the BUILD and INSTANTIATION on the node with the highest sequence number',
       icon: FileText,
       iconBg: '#e0e7ff',
       iconColor: '#6366f1',
@@ -88,13 +99,11 @@ EXECUTE DBMS_LOGMNR_D.BUILD(
       endpoint: '/api/check/table-instantiation',
       requiresParams: true,
       params: [
-        { name: 'tableOwner', label: 'Table Owner', placeholder: 'SCHEMA_NAME' },
-        { name: 'tableNames', label: 'Table Names (comma-separated)', placeholder: 'TABLE1,TABLE2' }
+        { name: 'tables', label: 'Tables (owner.table separated by ;)', placeholder: 'SCHEMA1.TABLE1;SCHEMA1.TABLE2', uppercase: true }
       ],
       query: `SELECT TABLE_OWNER, TABLE_NAME, TIMESTAMP, scn as SCN_TO_START_TABLE
 FROM dba_capture_prepared_tables
-WHERE table_owner = :tableOwner
-  AND table_name IN (:tableNames);`,
+WHERE (TABLE_OWNER, TABLE_NAME) IN (:tables);`,
       actions: [
         {
           type: 'prepare-tables',
@@ -112,13 +121,11 @@ WHERE table_owner = :tableOwner
       endpoint: '/api/check/scn-validation',
       requiresParams: true,
       params: [
-        { name: 'tableOwner', label: 'Table Owner', placeholder: 'SCHEMA_NAME' },
-        { name: 'tableNames', label: 'Table Names (comma-separated)', placeholder: 'TABLE1,TABLE2' }
+        { name: 'tables', label: 'Tables (owner.table separated by ;)', placeholder: 'SCHEMA1.TABLE1;SCHEMA1.TABLE2', uppercase: true }
       ],
       query: `SELECT MAX(SCN) as MAX_SCN
 FROM DBA_CAPTURE_PREPARED_TABLES
-WHERE TABLE_OWNER = :tableOwner
-  AND TABLE_NAME IN (:tableNames);`
+WHERE (TABLE_OWNER, TABLE_NAME) IN (:tables);`
     },
     {
       id: 'open-transactions',
@@ -144,7 +151,7 @@ FROM GV$TRANSACTION;`
       endpoint: '/api/check/db-values',
       requiresParams: false,
       query: `SELECT name,value from v$parameter
-where name in ('db_name','db_unique_name','log_archive_dest_1','enable_goldengate_replication', 'log_archive_dest_2','log_archive_dest_state_1','log_archive_dest_state_2','fal_client','fal_server','standby_file_management','dg_broker_start','dg_broker_config_file1','dg_broker_config_file2','log_archive_config','service_names','streams_pool_size')
+where name in ('db_name','db_unique_name','log_archive_dest_1','enable_goldengate_replication', 'log_archive_dest_2','log_archive_dest_state_1','log_archive_dest_state_2','log_archive_dest_state_3','log_archive_dest_state_4','fal_client','fal_server','standby_file_management','dg_broker_start','dg_broker_config_file1','dg_broker_config_file2','log_archive_config','service_names','streams_pool_size')
 and value is not null
 union
 select 'global_name' as name, GLOBAL_NAME  FROM global_name
@@ -390,6 +397,66 @@ order by name;`
             isConnected={isConnected}
           />
         ))}
+      </div>
+
+      {/* OJET Estimated Parameters */}
+      <div style={{ marginTop: '40px' }}>
+        <div className="section-header" style={{ marginBottom: '20px' }}>
+          <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#1f2937', margin: 0 }}>
+            OJET Estimated Parameters
+          </h2>
+        </div>
+        <div className="card" style={{ maxWidth: '680px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+            <div className="form-group">
+              <label style={{ fontSize: '13px', fontWeight: '600' }}>Average Row Length (Bytes)</label>
+              <input
+                type="number"
+                min="0"
+                value={calcAvgRowLength}
+                onChange={e => setCalcAvgRowLength(e.target.value)}
+                placeholder="e.g. 512"
+                style={{ fontSize: '13px' }}
+              />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: '13px', fontWeight: '600' }}># of Row Changes per Tx</label>
+              <input
+                type="number"
+                min="0"
+                value={calcRowChanges}
+                onChange={e => setCalcRowChanges(e.target.value)}
+                placeholder="e.g. 1000000"
+                style={{ fontSize: '13px' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div style={{ padding: '14px', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
+              <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Raw Data Size (GB)</div>
+              <div style={{ fontSize: '22px', fontWeight: '700', color: '#15803d' }}>
+                {rawDataSizeGB !== null ? rawDataSizeGB.toFixed(1) : '—'}
+              </div>
+            </div>
+            <div style={{ padding: '14px', background: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
+              <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Min STREAMS_POOL_SIZE (GB)</div>
+              <div style={{ fontSize: '22px', fontWeight: '700', color: '#1d4ed8' }}>
+                {minStreamsPoolGB !== null ? minStreamsPoolGB.toFixed(1) : '—'}
+              </div>
+            </div>
+            <div style={{ padding: '14px', background: '#fefce8', borderRadius: '8px', border: '1px solid #fde68a' }}>
+              <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.05em' }}>TransactionBufferSpilloverCount</div>
+              <div style={{ fontSize: '22px', fontWeight: '700', color: '#b45309' }}>
+                {txBufferSpillover !== null ? txBufferSpillover.toLocaleString() : '—'}
+              </div>
+            </div>
+            <div style={{ padding: '14px', background: '#fdf4ff', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
+              <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.05em' }}>TransactionAgeSpilloverLimit (2 hrs)</div>
+              <div style={{ fontSize: '22px', fontWeight: '700', color: '#7c3aed' }}>8,000</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

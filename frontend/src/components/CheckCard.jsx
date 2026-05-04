@@ -104,22 +104,37 @@ function CheckCard({ check, isConnected, dbConfigProd, dbConfigDownstream, isCon
         response = await axios.post('/api/action/build-dictionary', payload)
       } else if (actionType === 'prepare-tables') {
         // Parse tables from params
-        const { tableOwner, tableNames } = params
-        if (!tableOwner || !tableNames) {
+        const rawTables = (params.tables || '').trim().toUpperCase()
+        if (!rawTables) {
           setActionResult({
             success: false,
-            message: 'Please provide Table Owner and Table Names first'
+            message: 'Please provide Tables (owner.table separated by ;) first'
           })
           setActionLoading(false)
           return
         }
 
-        const tables = tableNames.split(',').map(name => ({
-          schema: tableOwner.trim(),
-          table: name.trim()
-        }))
+        const tableList = rawTables.split(';')
+          .filter(entry => entry.trim())
+          .map(entry => {
+            const parts = entry.trim().split('.')
+            return {
+              schema: (parts[0] || '').trim(),
+              table: (parts[1] || '').trim()
+            }
+          })
+          .filter(t => t.schema && t.table)
 
-        const payload = dbConfigToUse ? { tables, dbConfig: dbConfigToUse } : { tables }
+        if (tableList.length === 0) {
+          setActionResult({
+            success: false,
+            message: 'Invalid format. Use: SCHEMA1.TABLE1;SCHEMA2.TABLE2'
+          })
+          setActionLoading(false)
+          return
+        }
+
+        const payload = dbConfigToUse ? { tables: tableList, dbConfig: dbConfigToUse } : { tables: tableList }
         response = await axios.post('/api/action/prepare-tables', payload)
       }
 
@@ -144,7 +159,27 @@ function CheckCard({ check, isConnected, dbConfigProd, dbConfigDownstream, isCon
   }
 
   const renderResults = () => {
-    if (!results || !showResults) return null
+    if (!results) return null
+
+    if (!showResults) {
+      return (
+        <div style={{ marginTop: '12px' }}>
+          <button
+            onClick={() => setShowResults(true)}
+            className="btn"
+            style={{
+              width: '100%',
+              background: '#f3f4f6',
+              color: '#374151',
+              fontSize: '13px'
+            }}
+          >
+            <ChevronDown size={16} />
+            Show Results ({Array.isArray(results.data) ? results.data.length : 1} row{Array.isArray(results.data) && results.data.length !== 1 ? 's' : ''})
+          </button>
+        </div>
+      )
+    }
 
     // Special handling for SCN Validation
     if (check.id === 'scn-validation' && results.data) {
@@ -166,7 +201,7 @@ function CheckCard({ check, isConnected, dbConfigProd, dbConfigDownstream, isCon
                 color: '#6b7280',
                 fontSize: '13px'
               }}
-              title="Close results"
+              title="Hide results"
             >
               <X size={18} />
             </button>
@@ -207,7 +242,7 @@ function CheckCard({ check, isConnected, dbConfigProd, dbConfigDownstream, isCon
                 color: '#6b7280',
                 fontSize: '13px'
               }}
-              title="Close results"
+              title="Hide results"
             >
               <X size={18} />
             </button>
@@ -257,7 +292,7 @@ function CheckCard({ check, isConnected, dbConfigProd, dbConfigDownstream, isCon
                 color: '#6b7280',
                 fontSize: '13px'
               }}
-              title="Close results"
+              title="Hide results"
             >
               <X size={18} />
             </button>
@@ -293,7 +328,7 @@ function CheckCard({ check, isConnected, dbConfigProd, dbConfigDownstream, isCon
                 type="text"
                 id={`${check.id}-${param.name}`}
                 value={params[param.name] || ''}
-                onChange={(e) => handleParamChange(param.name, e.target.value)}
+                onChange={(e) => handleParamChange(param.name, param.uppercase ? e.target.value.toUpperCase() : e.target.value)}
                 placeholder={param.placeholder}
                 style={{ fontSize: '13px' }}
               />

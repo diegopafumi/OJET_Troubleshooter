@@ -116,6 +116,171 @@ function Monitor() {
     }
   }
 
+  // Function to colorize cells in ASCII table based on content
+  const colorizeLine = (line) => {
+    // Check if line contains data cells (has │ separators)
+    if (!line.includes('│')) {
+      return { text: line, highlights: [] }
+    }
+
+    const highlights = []
+
+    // Check for Last Event Read Age (format: "254,848.806 sec")
+    const ageMatch = line.match(/([\d,]+(?:\.\d+)?)\s*sec/)
+    if (ageMatch) {
+      const seconds = parseFloat(ageMatch[1].replace(/,/g, ''))
+      let color = null
+      if (seconds > 2000) {
+        color = '#ff0000' // Red - Critical
+      } else if (seconds >= 1000) {
+        color = '#ffff00' // Yellow - Warning
+      }
+      // No green - only highlight problems
+      if (color) {
+        highlights.push({ pattern: ageMatch[0], color })
+      }
+    }
+
+    // Check for Memory Usage percentages
+    const percentMatches = [...line.matchAll(/([\d.]+)\s*%/g)]
+    percentMatches.forEach((match, index) => {
+      const percent = parseFloat(match[1])
+      let color = null
+
+      // First percentage is Memory Usage Apply Session
+      if (index === 0) {
+        if (percent > 95) {
+          color = '#ff0000' // Red
+        } else if (percent > 90) {
+          color = '#ffff00' // Yellow
+        }
+        // No green - only highlight problems
+      } else {
+        // Other memory metrics
+        if (percent > 90) {
+          color = '#ff0000' // Red
+        } else if (percent > 75) {
+          color = '#ffff00' // Yellow
+        }
+        // No green - only highlight problems
+      }
+
+      if (color) {
+        highlights.push({ pattern: match[0], color, index: match.index })
+      }
+    })
+
+    // Check for CaptureState "WAITING FOR REDO:" - Red
+    const waitingForRedoMatch = line.match(/WAITING FOR REDO:[^\│]*/i)
+    if (waitingForRedoMatch) {
+      highlights.push({ pattern: waitingForRedoMatch[0], color: '#ff0000', index: waitingForRedoMatch.index })
+    }
+
+    // Check for "unable to enqueue LCRS either because of low memory" - Yellow
+    const lowMemoryMatch = line.match(/unable to enqueue LCRS either because of low memory/i)
+    if (lowMemoryMatch) {
+      highlights.push({ pattern: lowMemoryMatch[0], color: '#ffff00', index: lowMemoryMatch.index })
+    }
+
+    // Check for SpillCount > 0 - Yellow
+    // Match pattern like "SpillCount │ 123" or just the number after SpillCount
+    const spillMatch = line.match(/(\d+)(?=\s*│[^│]*$)/)
+    if (spillMatch && line.includes('SpillCount')) {
+      const spillCount = parseInt(spillMatch[1])
+      if (spillCount > 0) {
+        highlights.push({ pattern: spillMatch[0], color: '#ffff00', index: spillMatch.index })
+      }
+    }
+
+    // Check for "StreamsPool    Under pressure" - Red
+    const streamsPressureMatch = line.match(/StreamsPool\s+Under pressure/i)
+    if (streamsPressureMatch) {
+      highlights.push({ pattern: streamsPressureMatch[0], color: '#ff0000', index: streamsPressureMatch.index })
+    }
+
+    return { text: line, highlights }
+  }
+
+  // Function to render colorized output
+  const renderColorizedOutput = (output) => {
+    if (!output) return 'No output'
+
+    const lines = output.split('\n')
+    return (
+      <pre style={{
+        margin: 0,
+        whiteSpace: 'pre',
+        fontFamily: 'inherit'
+      }}>
+        {lines.map((line, lineIndex) => {
+          const { text, highlights } = colorizeLine(line)
+
+          if (highlights.length === 0) {
+            // No highlights, render as-is
+            return <span key={lineIndex} style={{ display: 'block' }}>{text}</span>
+          }
+
+          // Render line with highlighted segments
+          const parts = []
+          let lastIndex = 0
+
+          // Sort highlights by their position in the string
+          const sortedHighlights = highlights
+            .map(h => ({
+              ...h,
+              index: h.index !== undefined ? h.index : text.indexOf(h.pattern, lastIndex)
+            }))
+            .sort((a, b) => a.index - b.index)
+
+          sortedHighlights.forEach((highlight, i) => {
+            const startIndex = highlight.index
+            const endIndex = startIndex + highlight.pattern.length
+
+            // Add text before highlight
+            if (startIndex > lastIndex) {
+              parts.push(
+                <span key={`${lineIndex}-text-${i}`}>
+                  {text.substring(lastIndex, startIndex)}
+                </span>
+              )
+            }
+
+            // Add highlighted text
+            parts.push(
+              <span
+                key={`${lineIndex}-highlight-${i}`}
+                style={{
+                  backgroundColor: highlight.color,
+                  color: '#000000',
+                  fontWeight: '700'
+                }}
+              >
+                {highlight.pattern}
+              </span>
+            )
+
+            lastIndex = endIndex
+          })
+
+          // Add remaining text after last highlight
+          if (lastIndex < text.length) {
+            parts.push(
+              <span key={`${lineIndex}-text-end`}>
+                {text.substring(lastIndex)}
+              </span>
+            )
+          }
+
+          return (
+            <span key={lineIndex} style={{ display: 'block' }}>
+              {parts}
+            </span>
+          )
+        })}
+      </pre>
+    )
+  }
+
   return (
     <div className="main-content">
       <div className="header">
@@ -394,7 +559,7 @@ function Monitor() {
                 {result.command}
               </h3>
 
-              <pre style={{
+              <div style={{
                 background: '#1f2937',
                 color: '#f3f4f6',
                 padding: '16px',
@@ -405,8 +570,8 @@ function Monitor() {
                 margin: 0,
                 fontFamily: 'Monaco, Consolas, "Courier New", monospace'
               }}>
-                {result.output || 'No output'}
-              </pre>
+                {renderColorizedOutput(result.output)}
+              </div>
             </div>
           ))}
         </div>

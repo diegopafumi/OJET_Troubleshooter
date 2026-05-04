@@ -1,28 +1,32 @@
-# OJET Troubleshooter v1.3.0 - Installation Guide
+# OJET Troubleshooter v1.5.0 - Installation Guide
 
-**Release Date**: February 5, 2026
-**Version**: 1.3.0
-**Package**: OJET_Troubleshooter_v1.3.0.zip
+**Release Date**: March 16, 2026
+**Version**: 1.5.0
+**Package**: OJET_Troubleshooter_v1.5.0.zip
 
 ---
 
-## 🎉 What's New in v1.3.0
+## 🎉 What's New in v1.5.0
 
 ### Major Features
-- ✨ **OJET Queries Page** - 7 pre-configured Oracle queries for OJET monitoring
-- ✨ **Interactive Documentation** - Expandable column descriptions and health metrics
-- ✨ **Optimized Table Display** - Space-efficient columns with dynamic widths
-- ✨ **Credential Persistence** - Database credentials saved in browser localStorage
-- ✨ **Troubleshooting Tips** - Built-in guidance for common issues
+- ✨ **10 Pre-configured OJET Queries** - Comprehensive Oracle queries for OJET monitoring
+- ✨ **Multi-Tier Health Logic** - Intelligent 5-priority health detection for Outbound Server
+- ✨ **Session Mapping** - Long Running Transactions now show USERNAME and MACHINE via v$session JOINs
+- ✨ **SCN Tracking** - CAPTURED_APPLY_DIFF column in Recovery Checkpoint and Capture Status
+- ✨ **Standalone Monitor Script** - Monitor_Ojet.sh for command-line monitoring
+- ✨ **Disconnect Feature** - Clean connection management with state reset
 
-### 7 Pre-configured Queries
-1. Check Capture Process Status (DBA_CAPTURE)
-2. Check Propagation Receiver
-3. Check Capture Process Memory Usage
-4. Check Apply Process Memory Usage
-5. Check Streams Pool Memory Usage
-6. Check Database Memory Parameters
-7. Check Transactions Being Processed
+### Pre-configured Queries
+1. Recovery Checkpoint and SCN Tracking
+2. Check Capture Process Status (Extraction Process)
+3. Interested LCR (Capture Process Memory Usage)
+4. Outbound Server (Dispatcher)
+5. Long Running Transactions & Errors
+6. Check Data Transport (Downstream Status)
+7. Check Streams Pool Memory Usage
+8. Check Database Memory Parameters
+9. Finding "Holes" on Arch Log Shipping
+10. Archive Logs Safe to Delete
 
 See **RELEASE_NOTES.md** for complete details.
 
@@ -56,7 +60,7 @@ Before installing, ensure you have:
 
 ### Step 1: Extract the Package
 ```bash
-unzip OJET_Troubleshooter_v1.3.0.zip
+unzip OJET_Troubleshooter_v1.5.0.zip
 cd OJET_Troubleshooter
 ```
 
@@ -104,7 +108,7 @@ The application has 7 main pages:
 4. **Show Commands** - OJET command reference
 5. **Add/Remove Tables** - Table management guides
 6. **Monitor** - Real-time Striim monitoring
-7. **Ojet Queries** - Execute useful Oracle queries for OJET monitoring ⭐ NEW
+7. **Ojet Queries** - Execute useful Oracle queries for OJET monitoring
 
 ### Validation PROD (Single Database)
 1. Enter database credentials in the sidebar
@@ -112,7 +116,7 @@ The application has 7 main pages:
 3. Run validation checks
 4. Execute corrective actions if needed
 
-### Validation Downstream (Dual Database) ⭐ NEW
+### Validation Downstream (Dual Database)
 1. **Connect to Primary DB**:
    - Enter credentials in first form
    - Click "Connect to Primary DB"
@@ -131,20 +135,23 @@ The application has 7 main pages:
 4. Click "Monitor Source"
 5. View results in ASCII tables
 
-### Ojet Queries ⭐ NEW
+### Ojet Queries
 1. Enter Oracle database credentials in the sidebar
 2. Click "Connect to Database"
-3. Browse available queries:
-   - **Capture Process Status** - View detailed status of OJET capture processes
-   - **Propagation Receiver** - Monitor data transport and propagation status
-   - **Capture Process Memory** - Monitor memory allocation for capture processes
-   - **Apply Process Memory** - Monitor memory usage for apply/reader processes
-   - **Streams Pool Memory** - Monitor overall streams pool allocation
-   - **Database Memory Parameters** - View key Oracle memory configuration
-   - **Transactions Processing** - View transactions being processed
+3. Browse 10 available queries covering:
+   - **Recovery Checkpoint & SCN Tracking** - Checkpoint gap and CAPTURED_APPLY_DIFF
+   - **Capture Process Status** - Extraction health with SCN progression
+   - **Interested LCR** - Capture process filtering efficiency
+   - **Outbound Server** - Complete pipeline with multi-tier health logic
+   - **Long Running Transactions** - Session mapping with USERNAME/MACHINE
+   - **Data Transport** - Propagation receiver and network health
+   - **Streams Pool Memory** - Pool utilization and health
+   - **Database Memory Parameters** - Oracle memory configuration
+   - **Arch Log Holes** - Missing archive log sequence detection
+   - **Archive Logs Safe to Delete** - Safe cleanup identification
 4. Click "Execute Query" on any query card
-5. View results in formatted tables
-6. Expand "View SQL Query" to see the actual SQL being executed
+5. View results in formatted tables with color-coded health indicators
+6. Expand "📖 Column Descriptions & Health Metrics" for built-in documentation
 
 ---
 
@@ -200,7 +207,7 @@ nano vite.config.js
 - Verify Striim is running and accessible
 - Check Striim version (v5.2.0.4E confirmed working)
 
-See **RESTART_GUIDE.md** for more troubleshooting tips.
+See **README.md** troubleshooting section for more tips.
 
 ---
 
@@ -210,12 +217,9 @@ Complete documentation is included:
 
 - **README.md** - Project overview and features
 - **RELEASE_NOTES.md** - Version history and changes
-- **CHANGELOG.md** - Detailed change log
-- **GETTING_STARTED.md** - Quick start guide
+- **OJET_QUERIES_GUIDE.md** - OJET Queries reference
 - **MONITOR_GUIDE.md** - Striim monitoring guide
-- **PORTABILITY_GUIDE.md** - Transfer between machines
 - **REMOTE_ACCESS.md** - GCP/AWS/VPS deployment
-- **RESTART_GUIDE.md** - Restart and troubleshooting
 - **DOCUMENTATION_INDEX.md** - Documentation navigation
 
 ---
@@ -248,5 +252,5 @@ You're ready to start troubleshooting OJET! 🚀
 3. Connect to your Oracle database
 4. Start running validation checks
 
-Enjoy using OJET Troubleshooter v1.2.0! 🎉
+Enjoy using OJET Troubleshooter v1.5.0! 🎉
 

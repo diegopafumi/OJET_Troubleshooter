@@ -160,7 +160,8 @@ OJetConfig: '{"OJET":["use_previous_dict_build:1"]}'`,
       icon: XCircle,
       iconBg: '#fef3c7',
       iconColor: '#f59e0b',
-      reason: `Unable to communicate with OJetServer capture process. Possible reasons: 
+      reason: `Unable to communicate with OJetServer capture process. 
+      Possible reasons: 
       - Insufficient memory 
       - Network issues 
       - SYSAUX tablespace full.
@@ -200,8 +201,7 @@ WHERE tablespace_name = 'SYSAUX';`,
       iconColor: '#dc2626',
       reason: `Dictionary build process is hanging, usually due to blocking sessions or locks on system tables.`,
       diagnosis: {
-        command: `SELECT CAPTURE_NAME, STATUS
-FROM DBA_CAPTURE;`,
+        command: `SELECT CAPTURE_NAME, STATUS FROM DBA_CAPTURE;`,
         description: 'Check for blocking sessions:',
         results: [
           { status: 'Capture exists', description: 'Old capture process may be blocking' },
@@ -261,15 +261,13 @@ FROM DBA_CAPTURE;`,
         description: 'Restart the apply process on the downstream database. The OJET app will stop automatically and needs to be restarted manually.',
         command: `-- 1. Stop Apply process in Downstream DB
 BEGIN
-  DBMS_APPLY_ADM.STOP_APPLY(
-    apply_name => '<ojet_source_name>');
+  DBMS_APPLY_ADM.STOP_APPLY(apply_name => '<ojet_source_name>');
 END;
 /
 
 -- 2. Start Apply process in Downstream DB
 BEGIN
-  DBMS_APPLY_ADM.START_APPLY(
-    apply_name => '<ojet_source_name>');
+  DBMS_APPLY_ADM.START_APPLY(apply_name => '<ojet_source_name>');
 END;
 /
 
@@ -302,14 +300,16 @@ show admin.OJE_TEST status
 └─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────────────────────┴────────────┴─────────────────┴──────────────────────┘
 
 -- Then verify Status of Arch Log shipping on Primary DB:
-SELECT DEST_ID, STATUS, ERROR, destination
+SELECT DEST_ID, STATUS, GAP_STATUS, ERROR, DESTINATION
 FROM V$ARCHIVE_DEST_STATUS
-WHERE DEST_ID IN (1,2);
+WHERE DEST_ID IN (1,2,3);
 
 -- Expected output showing the issue:
-DEST_ID  STATUS  Destination                              ERROR
-1        VALID   /opt/oracle/product/19c/dbhome_1/dbs/ARCH
-2        ERROR   DOWNS                                    ORA-16191: Primary log shipping client not logged on standby`,
+DEST_ID  STATUS  GAP_STATUS       Destination                               ERROR
+1        VALID                    /opt/oracle/product/19c/dbhome_1/dbs/ARCH
+2        ERROR   RESOLVABLE GAP   DOWNS                                     ORA-16191: Primary log shipping client not logged on standby
+3        ERROR   RESOLVABLE GAP   DOWNS                                     ORA-12541: TNS:no listener
+`,
         description: 'Symptoms of this issue:',
         results: [
           { status: 'DEST_ID 2 shows ERROR', description: 'Archive log destination to Downstream is in ERROR state' },
@@ -348,22 +348,173 @@ ALTER DATABASE REGISTER LOGFILE '/home/oracle/FROMPROD/1_561_1218022277.dbf' FOR
 
 -- HELPFUL QUERY: Gap Finder Query. Run this in Downstream DB (CDB$ROOT if applicable)
 -- This identifies missing sequence numbers in archived logs
-SELECT
-    thread#,
-    low_sequence AS "Gap Start",
-    high_sequence AS "Gap End",
-    (high_sequence - low_sequence + 1) AS "Missing Count"
-FROM (
-    SELECT thread#, sequence# + 1 AS low_sequence, next_seq - 1 AS high_sequence
-    FROM (
-        SELECT thread#, sequence#,
-               LEAD(sequence#) OVER (PARTITION BY thread# ORDER BY sequence#) AS next_seq
-        FROM v$archived_log
-    )
-    WHERE next_seq IS NOT NULL
-      AND next_seq != sequence# + 1
-)
-ORDER BY thread#, low_sequence;`
+SELECT thread#, low_sequence AS "Gap Start",
+       high_sequence AS "Gap End", (high_sequence - low_sequence + 1) AS "Missing Count"
+FROM ( SELECT thread#, sequence# + 1 AS low_sequence, next_seq - 1 AS high_sequence
+         FROM (SELECT thread#, sequence#, LEAD(sequence#) OVER (PARTITION BY thread# ORDER BY sequence#) AS next_seq
+               FROM v$archived_log)
+         WHERE next_seq IS NOT NULL
+           AND next_seq != sequence# + 1)
+ORDER BY thread#, low_sequence;
+
+-- OR to find "Holes"
+SELECT SOURCE_DATABASE, THREAD#, SEQUENCE# + 1 AS MISSING_START,
+       NEXT_SEQ - 1 AS MISSING_END, (NEXT_SEQ - SEQUENCE# - 1) AS TOTAL_MISSING_IN_HOLE
+FROM (SELECT DISTINCT SOURCE_DATABASE, THREAD#, SEQUENCE# ,
+            LEAD(SEQUENCE#) OVER (PARTITION BY SOURCE_DATABASE, THREAD# ORDER BY SEQUENCE#) AS NEXT_SEQ
+        FROM DBA_REGISTERED_ARCHIVED_LOG)
+WHERE NEXT_SEQ - SEQUENCE# > 1;`
+      }
+    },
+    {
+      id: 10,
+      title: 'OJet app failed with "ORA-26914: Unable to communicate with OJetServer capture process"',
+      icon: XCircle,
+      iconBg: '#fee2e2',
+      iconColor: '#ef4444',
+      reason: `The OJET application fails with ORA-26914 error. 
+      In the DB alert log file, it also shows: ORA-01341: LogMiner out-of-memory
+
+This occurs when the MAX_SGA_SIZE of the capture process is set to Infinite by default, which can cause memory allocation issues.`,
+      diagnosis: {
+        command: `-- Check the alert log for the error
+tail -f /path/to/alert_log.log | grep -i "ORA-01341\\|ORA-26914"
+
+-- Check current MAX_SGA_SIZE setting
+SELECT CAPTURE_NAME,
+       SUBSTR(CAPTURE_USER, 1, 20) AS CAPTURE_USER,
+       MAX_SGA_SIZE
+FROM DBA_CAPTURE;`,
+        description: 'Symptoms of this issue:',
+        results: [
+          { status: 'ORA-26914 error', description: 'Unable to communicate with OJetServer capture process' },
+          { status: 'ORA-01341 in alert log', description: 'LogMiner out-of-memory error appears in database alert log' },
+          { status: 'MAX_SGA_SIZE = INFINITE', description: 'Capture process has unlimited memory allocation' }
+        ],
+        note: 'The default MAX_SGA_SIZE setting of Infinite can cause memory management issues'
+      },
+      solution: {
+        title: 'How to fix?',
+        description: 'Configure the max_sga_size for capture and apply process in OJetConfig instead of using Infinite.',
+        command: `-- Set MAX_SGA_SIZE to a specific value (e.g., 2048 MB) in OJetConfig
+-- Example configuration:
+OJetConfig: '{"CAPTURE":["MAX_SGA_SIZE:2048"],"APPLY":["MAX_SGA_SIZE:2048"]}',
+
+-- After updating the configuration, restart the OJET application
+-- The capture and apply processes will now use the specified memory limit`
+      }
+    },
+    {
+      id: 11,
+      title: 'OJet app hangs with Apply Reader in "Waiting for memory" state',
+      icon: AlertTriangle,
+      iconBg: '#fef3c7',
+      iconColor: '#f59e0b',
+      reason: `Symptom:
+OJet app hangs with Apply Reader in "Waiting for memory" state.
+
+Oracle trace file showing:
+knanrpeos: WARNING couldn't free enough streams pool
+
+Cause:
+Streams pool size issue during CDC replication, even after increasing the streams_pool_size. The error message "knanrpeos: WARNING couldn't free enough streams pool" is being displayed.
+
+Oracle Bug 37621721 - XSTREAM CAPTURE PROCESS IN STATE PAUSED FOR FLOW CONTROL`,
+      diagnosis: {
+        command: `-- Check Apply Reader state
+SELECT r.APPLY_NAME, r.STATE,  r.TOTAL_MESSAGES_DEQUEUED,
+       ROUND(r.SGA_USED / 1024 / 1024, 2) AS USED_MB,
+       ROUND(r.SGA_ALLOCATED / 1024 / 1024, 2) AS ALLOC_MB
+FROM GV$XSTREAM_APPLY_READER r;
+
+-- Check Streams Pool usage
+SELECT ROUND(CURRENT_SIZE / 1024 / 1024, 2) AS STREAM_POOL_TOTAL_MB,
+       ROUND((CURRENT_SIZE - TOTAL_MEMORY_ALLOCATED) / 1024 / 1024, 2) AS STREAM_POOL_FREE_MB,
+       ROUND((TOTAL_MEMORY_ALLOCATED / NULLIF(CURRENT_SIZE, 0)) * 100, 2) AS STREAM_POOL_USAGE_PCT
+FROM V$STREAMS_POOL_STATISTICS;
+
+-- Check trace file for the warning
+-- Location: $ORACLE_BASE/diag/rdbms/<db_name>/<instance_name>/trace/
+grep -i "knanrpeos: WARNING" *.trc`,
+        description: 'Symptoms of this issue:',
+        results: [
+          { status: 'Apply Reader state', description: 'Apply Reader shows "Waiting for memory" state' },
+          { status: 'Trace file warning', description: 'knanrpeos: WARNING couldn\'t free enough streams pool' },
+          { status: 'Streams pool exhausted', description: 'Issue persists even after increasing streams_pool_size' }
+        ],
+        note: 'This is caused by Oracle Bug 37621721 - XSTREAM CAPTURE PROCESS IN STATE PAUSED FOR FLOW CONTROL'
+      },
+      solution: {
+        title: 'How to fix?',
+        description: 'Apply Oracle patch 38120771 to resolve the Xstream capture flow control issue.',
+        command: `-- Solution: Apply Oracle patch 38120771
+-- Note: This patch is not included in any patchset currently, including 19.29
+
+-- Steps:
+-- 1. Download patch 38120771 from My Oracle Support
+-- 2. Apply the patch to your Oracle database
+-- 3. Restart the database and OJET application
+
+-- Reference Support Note:
+-- https://support.striim.com/hc/en-us/articles/36763952229271-OJET-HANGS-ONCE-APPLY-READER-CONSUMES-ALL-STREAMS-POOL
+
+-- Verify patch installation:
+SELECT PATCH_ID, PATCH_UID, STATUS, DESCRIPTION
+FROM DBA_REGISTRY_SQLPATCH
+WHERE PATCH_ID = 38120771;`
+      }
+    },
+    {
+      id: 12,
+      title: 'Ojet Recovery SCN not moving due to Oracle bug',
+      icon: RefreshCw,
+      iconBg: '#fee2e2',
+      iconColor: '#ef4444',
+      reason: `Problem: Observed the RecoverySCN is not changing for long period.
+
+The min-SCN in Open transaction 11136291188463
+Application RecoverySCN 11135193075254
+
+From the above example, we can see the RecoverySCN does not change due below Oracle bug.
+
+Bug: 34470389: XSTREAM CLIENT STOPS RETRIEVING CHANGES WITH PROPAGATION RECEIVER WAITING FOR MEMORY
+Bug 18228645 - XStream capture REQUIRED_CHECKPOINT_SCN does not change`,
+      diagnosis: {
+        command: `-- Check Recovery SCN and open transactions
+SELECT CAPTURE_NAME,
+       REQUIRED_CHECKPOINT_SCN AS RECOVERY_SCN,
+       CAPTURE_TIME,
+       STATUS
+FROM DBA_CAPTURE;
+
+-- Check for long-running open transactions
+SELECT XIDUSN || '.' || XIDSLT || '.' || XIDSQN AS TRANSACTION_ID,
+       FIRST_SCN,
+       CUMULATIVE_MESSAGE_COUNT,
+       TOTAL_MESSAGE_COUNT
+FROM V$XSTREAM_TRANSACTION
+ORDER BY FIRST_SCN;
+
+-- Check min SCN in open transactions
+SELECT MIN(FIRST_SCN) AS MIN_OPEN_TRANSACTION_SCN
+FROM V$XSTREAM_TRANSACTION;`,
+        description: 'Symptoms of this issue:',
+        results: [
+          { status: 'RecoverySCN not moving', description: 'RecoverySCN remains unchanged for a long period' },
+          { status: 'SCN gap detected', description: 'Min-SCN in open transaction is higher than Application RecoverySCN' },
+          { status: 'Oracle bug impact', description: 'Caused by Oracle bugs 34470389 or 18228645' }
+        ],
+        note: 'This issue is caused by known Oracle bugs affecting XStream capture checkpoint SCN'
+      },
+      solution: {
+        title: 'How to fix?',
+        description: 'Refer to Oracle support to get fix for the bugs. Pre-requisite: Periodically take dictionary dumps using scheduled jobs.',
+        command: `-- Solution: Contact Oracle support for patches related to:
+-- Bug 34470389: XSTREAM CLIENT STOPS RETRIEVING CHANGES WITH PROPAGATION RECEIVER WAITING FOR MEMORY
+-- Bug 18228645: XStream capture REQUIRED_CHECKPOINT_SCN does not change
+
+-- Workaround: Refer to Support note
+-- https://support.striim.com/hc/en-us/articles/38105282943767-Ojet-Recovery-SCN-not-moving-due-to-Oracle-bug`
       }
     }
 
@@ -397,7 +548,7 @@ ORDER BY thread#, low_sequence;`
         }}>
           <Terminal size={20} color="#3b82f6" />
           <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600', color: '#1f2937' }}>
-            Quick Index - {issues.length} Common Issues
+            Quick Index - Common Issues
           </h3>
         </div>
 
@@ -495,12 +646,13 @@ ORDER BY thread#, low_sequence;`
                   <AlertTriangle size={16} color="#f59e0b" />
                   Reason
                 </div>
-                <p style={{ 
-                  fontSize: '14px', 
-                  lineHeight: '1.6', 
+                <p style={{
+                  fontSize: '14px',
+                  lineHeight: '1.6',
                   color: '#6b7280',
                   margin: 0,
-                  paddingLeft: '24px'
+                  paddingLeft: '24px',
+                  whiteSpace: 'pre-line'
                 }}>
                   {issue.reason}
                 </p>

@@ -33,6 +33,7 @@ Welcome to the OJET Troubleshooter documentation! This index will help you find 
 
 | Document | Description | When to Read |
 |----------|-------------|--------------|
+| **[OJET_QUERIES_GUIDE.md](OJET_QUERIES_GUIDE.md)** | Guide for 10 pre-configured Oracle queries | Using OJET Queries feature |
 | **[MONITOR_GUIDE.md](MONITOR_GUIDE.md)** | Real-time OJET monitoring via Striim REST API | Using Monitor feature |
 
 ---
@@ -119,13 +120,19 @@ tail -f logs/frontend.log  # Frontend logs
 ### 6. Monitor
 - Real-time OJET source monitoring
 - Striim REST API integration
-- Integrated `mon` command with filtered metrics (v1.2.1)
-- Smart default values with visual feedback (v1.2.1)
+- Integrated `mon` command with filtered metrics
 - Formatted ASCII tables
 - Persistent configuration
-- Enhanced error handling
 
 **Documentation**: See [MONITOR_GUIDE.md](MONITOR_GUIDE.md)
+
+### 7. OJET Queries
+- 10 pre-configured Oracle queries for OJET monitoring
+- Color-coded health indicators
+- Interactive column descriptions
+- Session mapping for long-running transactions
+
+**Documentation**: See [OJET_QUERIES_GUIDE.md](OJET_QUERIES_GUIDE.md)
 
 ---
 
@@ -150,6 +157,9 @@ tail -f logs/frontend.log  # Frontend logs
 
 **...access from a remote machine**
 → Read [REMOTE_ACCESS.md](REMOTE_ACCESS.md)
+
+**...execute Oracle queries for OJET monitoring**
+→ Read [OJET_QUERIES_GUIDE.md](OJET_QUERIES_GUIDE.md)
 
 **...start using the application quickly**
 → Read [README.md](README.md) - Section "Installation"

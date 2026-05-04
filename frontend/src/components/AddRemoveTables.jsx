@@ -25,8 +25,8 @@ function AddRemoveTables() {
   const addStepsDisabled = [
     {
       step: 1,
-      title: 'Stop the OJET App (suggestion: Check that there are not OLD Open Transactions)',
-      description: 'Stop the OJET application',
+      title: 'Stop OJET App (suggestion: Check that there are not OLD Open Transactions)',
+      description: 'Stop OJET application',
       color: '#3b82f6'
     },
     {
@@ -37,7 +37,7 @@ function AddRemoveTables() {
     },
     {
       step: 3,
-      title: 'Perform Table Instantiation for the new tables',
+      title: 'Perform Table Instantiation for ALL the tables',
       description: 'Prepare tables for CDC. exec DBMS_CAPTURE_ADM.PREPARE_TABLE_INSTANTIATION(table_name => \'OWNER.TABLE_NAME\', supplemental_logging => \'NONE\', container=> \'CURRENT\')',
       color: '#3b82f6'
     },
@@ -67,8 +67,8 @@ function AddRemoveTables() {
     },
     {
       step: '8',
-      title: 'LAter, Remove IgnorableExceptionCodes (optional)',
-      description: 'Once RECOVERY_SCN is higherr than the MAX(SCN) value collected before, you can remove the IgnorableExceptionCodes',
+      title: 'Later, Remove IgnorableExceptionCodes (optional)',
+      description: 'Once RECOVERY_SCN is higher than the MAX(SCN) value collected before, you can remove the IgnorableExceptionCodes',
       color: '#3b82f6'
     }
   ]
@@ -82,13 +82,13 @@ function AddRemoveTables() {
     },
     {
       step: 2,
-      title: 'Perform Table Instantiation for the new tables',
-      description: 'Prepare new tables. exec DBMS_CAPTURE_ADM.PREPARE_TABLE_INSTANTIATION(table_name => \'OWNER.TABLE_NAME\', supplemental_logging => \'NONE\', container=> \'CURRENT\')',
+      title: 'Perform Table Instantiation for ALL the tables',
+      description: 'Prepare CDC tables. exec DBMS_CAPTURE_ADM.PREPARE_TABLE_INSTANTIATION(table_name => \'OWNER.TABLE_NAME\', supplemental_logging => \'NONE\', container=> \'CURRENT\')',
       color: '#10b981'
     },
     {
       step: 3,
-      title: 'Get the Max(SCN) of latest Instantiation Process',
+      title: 'Get Max(SCN) of latest Instantiation Process',
       description: 'SELECT max(SCN) from DBA_CAPTURE_PREPARED_TABLES where TABLE_OWNER = ... and TABLE_NAME = ....',
       color: '#10b981'
     },
@@ -100,16 +100,16 @@ function AddRemoveTables() {
     },
     {
       step: 5,
-      title: 'Is Recovery_SCN higher than Max(SCN) from step 3?',
-      description: 'CRITICAL STEP: Wait for Recovery_SCN to be ahead of Max(SCN)',
+      title: 'Is RecoverySCN higher than Max(SCN) from step 3?',
+      description: 'CRITICAL STEP: Wait for RecoverySCN to be ahead of Max(SCN)',
       color: '#f59e0b',
       isDecision: true,
       hasExclamation: true
     },
     {
       step: 6,
-      title: 'Stop, Undeploy, Export and Drop the OJET App (suggestion: Check that there are not OLD Open Transactions)',
-      description: 'This step will clean up existing OJET deployment. Take a note of the RECOVERY_SCN',
+      title: 'Stop, Get RecoverySCN, Undeploy, Export and Drop the OJET App (suggestion: Check that there are not OLD Open Transactions)',
+      description: 'This step will clean up existing OJET deployment. Take a note of the RECOVERYSCN',
       color: '#10b981'
     },
     {
@@ -120,7 +120,7 @@ function AddRemoveTables() {
     },
     {
       step: 8,
-      title: 'Alter OJET Application TQL and add the new tables. For StartSCN, use the number captured on Step 3. Add IgnorableExceptionCodes',
+      title: 'Alter OJET TQL and add the new tables. For StartSCN, use the number captured on Step 6. Add IgnorableExceptionCodes',
       descriptionLines: [
         'Update TQL Code to include new tables in Source and Target.',
         'Modify StartSCN with the value captured on Step 6.',
@@ -130,14 +130,8 @@ function AddRemoveTables() {
     },
     {
       step: 8,
-      title: 'Import & Deploy the OJET Application',
-      description: 'Deploy updated application',
-      color: '#10b981'
-    },
-    {
-      step: '9',
-      title: 'Start OJET App',
-      description: 'Start the application',
+      title: 'Import, Deploy and Start OJET Application',
+      description: 'Import, Deploy and Start updated application',
       color: '#10b981'
     }
   ]

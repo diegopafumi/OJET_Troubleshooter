@@ -1,21 +1,24 @@
 # OJET Troubleshooter
 
+**Version 1.5.0** - March 16, 2026
+
 This is an application for technical diagnosis and validation of Oracle OJET.
 
 ## 🎯 Features
 
 ### 📄 Multiple Pages
 - **OJET Validation PROD**: Technical validation dashboard with 6 automated checks for production database
-- **OJET Validation Downstream**: Dual-database validation dashboard with 8 checks for downstream/replica scenarios
+- **OJET Validation Downstream**: Dual-database validation dashboard with 8 checks for primary/downstream scenario
 - **OJET Troubleshooting**: Common problems and solutions guide
 - **Show Commands**: OJET command reference with examples and field explanations
 - **Add/Remove Tables**: Step-by-step guides for table management
 - **Monitor**: Real-time monitoring of OJET sources via Striim REST API
-- **Ojet Queries**: Execute 7 pre-configured Oracle queries for OJET monitoring and troubleshooting ⭐ NEW
+- **Ojet Queries**: Pre-configured Oracle queries for OJET monitoring and troubleshooting
+- **Monitor_Ojet.sh**: Standalone bash script for command-line monitoring (no web interface needed)
 
 ### 🔍 Technical Validations
 
-#### Validation PROD (Single Database)
+#### Validation PROD (Primary Database Config)
 - **Oracle Connection**: Sidebar for database credentials
 - **6 Validation Categories**:
   - **Dictionary Dumps**: LogMiner dictionary file verification
@@ -24,10 +27,10 @@ This is an application for technical diagnosis and validation of Oracle OJET.
   - **Open Transactions**: Identification of long-running open transactions
   - **Check Other DB Values**: Critical database parameters and configuration
 
-#### Validation Downstream (Dual Database)
+#### Validation Downstream (Primary/Downstream Config)
 - **Two Independent Database Connections**:
-  - Primary DB (Production/Source database)
-  - Downstream DB (Downstream/Replica database)
+  - Primary DB
+  - Downstream DB
 - **8 Validation Categories** with smart connection routing:
   - **Existing Dictionary Dumps in Primary DB** → Uses Primary DB
   - **Take Dictionary Dump in Primary DB** → Uses Primary DB
@@ -83,20 +86,22 @@ This is an application for technical diagnosis and validation of Oracle OJET.
   - `show <source> memory` - Memory usage summary
   - `show <source> memory details` - Detailed memory breakdown with explanations
 
-### 📊 OJET Queries (NEW in v1.3.0)
+### 📊 OJET Queries
 - **Direct Oracle Database Queries**: Execute pre-configured queries for OJET monitoring
-- **7 Pre-configured Queries**:
-  1. **Check Capture Process Status** - View detailed status from DBA_CAPTURE
-  2. **Check Propagation Receiver** - Monitor data transport and propagation
-  3. **Check Capture Process Memory Usage** - Monitor memory allocation for capture
-  4. **Check Apply Process Memory Usage** - Monitor apply/reader process memory
-  5. **Check Streams Pool Memory Usage** - Monitor overall streams pool allocation
-  6. **Check Database Memory Parameters** - View Oracle memory configuration
-  7. **Check Transactions Being Processed** - View active transactions
+- **Pre-configured Queries**:
+  1. **Recovery Checkpoint and SCN Tracking** - Checkpoint gap and downstream latency
+  2. **Check Capture Process Status** - Extraction health and SCN progression
+  3. **Interested LCR** - Capture filtering efficiency and memory usage
+  4. **Outbound Server (Dispatcher)** - End-to-end pipeline with multi-tier health logic
+  5. **Long Running Transactions & Errors** - Session mapping (USERNAME, MACHINE)
+  6. **Check Data Transport** - Propagation receiver and network health
+  7. **Check Streams Pool Memory Usage** - Pool allocation and utilization
+  8. **Check Database Memory Parameters** - Oracle memory configuration
+  9. **Finding "Holes" on Arch Log Shipping** - Missing archive log sequences
+  10. **Archive Logs Safe to Delete** - Safe archive log cleanup
 - **Interactive Documentation**: Expandable column descriptions and health metrics for each query
-- **Optimized Table Display**: Space-efficient columns with dynamic widths
+- **Color-Coded Health Indicators**: Automatic 🔴/🟡/🟢 status for quick diagnosis
 - **Credential Persistence**: Database credentials saved in browser localStorage
-- **Troubleshooting Tips**: Built-in guidance for common issues and health indicators
 
 ## 🛠️ Technology Stack
 
@@ -336,58 +341,25 @@ The application has 6 main pages accessible from the top navigation bar:
    - Navigate to other pages and return without re-entering data
 
 
-## 🎨 Project Structure
-
-```
-OJET_Troubleshooter/
-├── backend/
-│   ├── server.js          # Express API with endpoints
-│   ├── package.json
-│   └── .env.example
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Sidebar.jsx      # Connection form
-│   │   │   ├── Dashboard.jsx    # Card grid
-│   │   │   └── CheckCard.jsx    # Individual card
-│   │   ├── App.jsx
-│   │   ├── main.jsx
-│   │   └── index.css
-│   ├── index.html
-│   ├── vite.config.js
-│   └── package.json
-└── README.md
-```
-
 ## 🔐 Security
 
-- Credentials are NOT stored in the frontend
-- Connection is established via connection pool in the backend
+- Credentials are NOT stored on disk (browser localStorage only for convenience)
+- Connection is established via connection pools in the backend
 - Multiple independent connection pools for different databases
 - Automatic cleanup of all connections on application exit
 - Parameter validation before executing queries
-- Robust error handling
-
 
 ---
 
 ## 📝 Important Notes
 
-1. **Oracle user must have permissions to query:**
-   - `v$archived_log`
-   - `dba_capture_prepared_tables`
-   - `v$database`
-   - `gv$transaction`
-   - `v$parameter`
-   - `global_name`
+1. **Oracle user must have SELECT permissions on:**
+   - `v$archived_log`, `v$database`, `v$parameter`, `v$xstream_capture`
+   - `v$xstream_outbound_server`, `v$xstream_transaction`, `v$transaction`, `v$session`
+   - `dba_capture`, `dba_capture_prepared_tables`, `dba_xstream_outbound`
+   - `gv$transaction`, `gv$propagation_receiver`, `global_name`
 
-2. **For production environments, consider:**
-   - User authentication
-   - HTTPS
-   - Rate limiting
-   - Audit logging
-
-3. **Default Ports:**
+2. **Default Ports:**
    - Frontend: `3000`
    - Backend: `3001`
    - These can be changed in `backend/.env` and `frontend/vite.config.js`
@@ -401,7 +373,6 @@ OJET_Troubleshooter/
 **Error: "Connection pool not initialized"**
 - Make sure to connect first using the sidebar
 - Verify that the backend is running
-
 
 ## 👥 Author
 

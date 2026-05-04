@@ -1,6 +1,6 @@
 # 📊 OJET Queries Guide
 
-This guide explains how to use the new **Ojet Queries** feature to execute useful Oracle queries for monitoring OJET capture and apply processes.
+This guide explains how to use the **Ojet Queries** feature to execute useful Oracle queries for monitoring OJET capture, outbound, and transport processes.
 
 ---
 
@@ -9,9 +9,10 @@ This guide explains how to use the new **Ojet Queries** feature to execute usefu
 The Ojet Queries feature allows you to:
 - Connect to an Oracle database directly
 - Execute pre-configured monitoring queries for OJET processes
-- View formatted results in tables
-- Monitor memory usage, capture status, and propagation health
-- Troubleshoot OJET performance issues
+- View formatted results in tables with color-coded health indicators
+- Monitor capture status, outbound pipeline, memory usage, and SCN tracking
+- Identify long-running transactions with session mapping (USERNAME, MACHINE)
+- Troubleshoot OJET performance issues with built-in documentation
 
 ---
 
@@ -42,104 +43,135 @@ Fill in the Oracle database connection details in the sidebar:
 
 ---
 
-## 📋 Available Queries
+## 📋 Available Queries (10 Total)
 
-### 1. Check Capture Process Status
-**Purpose**: View detailed status of OJET capture processes including SCN positions and configuration
+### 1. Recovery Checkpoint and SCN Tracking
+**Purpose**: Monitor how far the capture process checkpoint is behind the current captured SCN
 
 **Key Metrics**:
 - CAPTURE_NAME - Name of the capture process
-- QUEUE_OWNER - Owner of the queue
-- CAPTURE_USER - User running the capture
-- START_SCN - SCN from which capture starts
-- CAPTURED_SCN - SCN of last redo log record scanned
-- APPLIED_SCN - All changes below this SCN have been captured
-- FIRST_SCN - Lowest SCN to which capture can be repositioned
-- REQUIRED_CHECKPOINT_SCN - Oldest SCN for which redo/archive logs are needed
-- STATUS - Current administrative state (ENABLED, DISABLED, ABORTED)
-- ERROR_MESSAGE - Any error messages
+- CAPTURED_SCN - Highest SCN captured
+- APPLIED_SCN - Highest SCN applied by downstream client
+- CAPTURED_APPLY_DIFF - Gap between captured and applied SCNs (downstream latency)
+- REQUIRED_CHECKPOINT_SCN - Oldest SCN needed for redo log retention
+- CHECKPOINT_GAP - Difference between CAPTURED_SCN and REQUIRED_CHECKPOINT_SCN
+- CHECKPOINT_HEALTH - 🟡 STALE CHECKPOINT (gap > 2M) or 🟢 CHECKPOINT MOVING
 
-**Use Case**: Monitor overall health, progress, and configuration of capture processes
+**Use Case**: Identify long-running transactions preventing checkpoint advancement and redo log purging
 
 ---
 
-### 2. Check Propagation Receiver
-**Purpose**: Monitor data transport and propagation status
+### 2. Check Capture Process Status (Extraction Process)
+**Purpose**: Monitor the capture process status, latency, SCN progression, and extraction health
 
 **Key Metrics**:
-- TOTAL_MSGS - Total messages received
-- HIGHEST_MESS_SCN_RECEIVED - Highest SCN received
-- HIGHEST_MESS_ACKNOWLEDGE_TO_SENDER - Highest SCN acknowledged
-- STATE - Current propagation state
+- CAPTURE_NAME, STATUS, ERROR_MESSAGE
+- START_SCN, CAPTURED_SCN, APPLIED_SCN, CAPTURED_APPLY_DIFF
+- STATUS_CHECK - Multi-tier health indicator (🔴 ABORTED/CRITICAL LAG, 🟡 BACKLOGGED, 🟢 HEALTHY)
 
-**Use Case**: Identify bottlenecks in data propagation and check for lag
+**Use Case**: Monitor overall health, progress, and latency of extraction processes
 
 ---
 
-### 3. Check Capture Process Memory Usage
-**Purpose**: Monitor memory allocation and utilization for capture processes
+### 3. Interested LCR (Capture Process Memory Usage)
+**Purpose**: Monitor filtering efficiency — shows how many captured messages are actually interested (enqueued) vs. discarded
 
 **Key Metrics**:
-- USED_MB - Memory currently in use (MB)
-- ALLOCATED_MB - Total memory allocated (MB)
-- MEM_UTIL_PCT - Memory utilization percentage
-- LAG_SEC - Latency in seconds
+- CAPTURE_NAME, STATE, LAG_SEC, MEM_UTIL_PCT
+- TOTAL_CAPTURED, TOTAL_ENQUEUED, DIFF_CAPTURE_ENQ
+- ENGINE_HEALTH_STATUS - Comprehensive engine health indicator
 
-**Use Case**: Identify memory pressure and potential spilling to disk
+**Use Case**: Identify memory pressure, spilling, and filtering efficiency
 
 ---
 
-### 4. Check Apply Process Memory Usage
-**Purpose**: Monitor memory usage for apply/reader processes
+### 4. Outbound Server (Dispatcher)
+**Purpose**: Monitor the complete OJET pipeline from capture to outbound server
 
 **Key Metrics**:
-- APPLY_NAME - Name of the apply process
-- MSGS_TO_STRIIM - Messages sent to Striim
-- USED_MB / ALLOC_MB - Memory usage
-- MEM_UTIL_PCT - Memory utilization percentage
+- PIPELINE - Combined capture → outbound name
+- CAP_STATE, OUT_STATE - Current states of capture and outbound
+- ENQUEUED, SENT, IN_TRANSIT - LCR counts and gap
+- LAG_SEC - Capture latency in seconds
+- MB_SENT, LAST_MSG - Data volume and last sent timestamp (DD-MON HH24:MI:SS)
+- OUTBOUND_HEALTH - Multi-tier 5-priority health logic:
+  1. 🔴 RED: SERVER DOWN (ABORTED/DISABLED)
+  2. 🔴 RED: CRITICAL LAG (> 1800s)
+  3. 🟡 YELLOW: STRIIM IS SLOW / BOTTLENECK
+  4. 🟡 YELLOW: HIGH LAG (> 300s) / HUGE BACKLOG (> 500k)
+  5. 🟢 GREEN: HEALTHY (IDLE) / DATA FLOWING
 
-**Use Case**: Monitor apply process health and memory consumption
+**Use Case**: End-to-end pipeline monitoring — identifies crashes, lag, bottlenecks, and backpressure
 
 ---
 
-### 5. Check Streams Pool Memory Usage
+### 5. Long Running Transactions & Errors
+**Purpose**: Identify long-running transactions blocking replication with session mapping
+
+**Key Metrics**:
+- USERNAME - Oracle database user executing the transaction
+- MACHINE - Hostname/IP of the client machine
+- TRANSACTION_ID - Unique transaction ID (XIDUSN.XIDSLOT.XIDSQN)
+- TOTAL_MESSAGE_COUNT - LCRs pending (🔴 > 100k, 🟡 > 10k)
+- START_TIME - When the first change was captured (YYYY-MM-DD HH24:MI:SS)
+
+**Use Case**: Identify WHO and FROM WHERE is causing replication blocks. JOINs `v$xstream_transaction` with `v$transaction` and `v$session`.
+
+---
+
+### 6. Check Data Transport (Downstream Status)
+**Purpose**: Monitor data transport and propagation receiver status
+
+**Key Metrics**:
+- INST_ID, HIGHEST_MESS_SCN_RECEIVED, HIGHEST_MESS_ACKNOWLEDGE_TO_SENDER
+- UNACKNOWLEDGED_SCN_GAP, STATE
+- NETWORK_HEALTH_STATUS - Multi-tier network health indicator
+
+**Use Case**: Identify bottlenecks in data propagation and check for acknowledgment lag
+
+---
+
+### 7. Check Streams Pool Memory Usage
 **Purpose**: Monitor overall streams pool allocation and usage
 
 **Key Metrics**:
-- STREAM_POOL_TOTAL_MB - Total streams pool size
-- STREAM_POOL_FREE_MB - Free memory in streams pool
-- STREAM_POOL_USAGE_PCT - Usage percentage
+- STREAM_POOL_TOTAL_MB, STREAM_POOL_FREE_MB, STREAM_POOL_USAGE_PCT
+- POOL_HEALTH_STATUS - 🔴 EXHAUSTION (> 95%), 🟡 HIGH UTILIZATION (> 80%), 🟢 HEALTHY
 
 **Use Case**: Determine if streams_pool_size needs to be increased
 
-**Action**: If usage is > 90%, consider increasing streams_pool_size
-
 ---
 
-### 6. Check Database Memory Parameters
+### 8. Check Database Memory Parameters
 **Purpose**: View key Oracle memory configuration parameters
 
 **Parameters Shown**:
-- sga_target, sga_max_size
-- shared_pool_size, large_pool_size
-- streams_pool_size
-- memory_max_target, memory_target
-- db_cache_size
+- sga_target, sga_max_size, shared_pool_size, large_pool_size
+- streams_pool_size, memory_max_target, memory_target, db_cache_size
 
 **Use Case**: Review current memory configuration and plan adjustments
 
 ---
 
-### 7. Check Transactions Being Processed
-**Purpose**: View transactions currently being processed by Capture/Apply processes
+### 9. Finding "Holes" on Arch Log Shipping
+**Purpose**: Identify missing archive log sequences (gaps) in registered archive logs
 
 **Key Metrics**:
-- COMPONENT_NAME - Name of the component
-- TRAN_ID - Transaction ID
-- CUMULATIVE_MESSAGE_COUNT - Messages in transaction
-- FIRST_MESSAGE_POSITION - Starting position
+- THREAD#, SEQUENCE# - Log sequence tracking
+- Detects gaps that could prevent capture from advancing
 
-**Use Case**: Identify long-running transactions that may cause lag
+**Use Case**: Find missing archive logs that may block LogMiner and capture process
+
+---
+
+### 10. Archive Logs Safe to Delete
+**Purpose**: Identify which archive logs can be safely deleted based on capture checkpoint
+
+**Key Metrics**:
+- Archive log details with registration and checkpoint status
+- Shows last 100 logs for analysis
+
+**Use Case**: Safe cleanup of archive logs without breaking capture process
 
 ---
 
