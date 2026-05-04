@@ -9,7 +9,7 @@ Welcome to the OJET Troubleshooter documentation! This index will help you find 
 | Document | Description | When to Read |
 |----------|-------------|--------------|
 | **[README.md](README.md)** | Complete project overview and features | First time setup |
-| **[INSTALLATION.md](Installation.md)** | Installation guide | Installing the application |
+| **[INSTALLATION.md](INSTALLATION.md)** | Installation guide | Installing the application |
 
 ---
 
@@ -18,6 +18,8 @@ Welcome to the OJET Troubleshooter documentation! This index will help you find 
 | Document | Description | When to Read |
 |----------|-------------|--------------|
 | **[REMOTE_ACCESS.md](REMOTE_ACCESS.md)** | Access from remote machines | Setting up remote access |
+| **[DATABASE_SETUP.md](DATABASE_SETUP.md)** | Oracle user creation and privilege grants | Before first database connection |
+| **[API_REFERENCE.md](API_REFERENCE.md)** | Backend REST API endpoint documentation | Building integrations or debugging API |
 
 ---
 
@@ -141,7 +143,7 @@ tail -f logs/frontend.log  # Frontend logs
 ### I want to...
 
 **...install the application**
-→ Read [Installation.md](Installation.md)
+→ Read [INSTALLATION.md](INSTALLATION.md)
 
 **...see what's new**
 → Read [RELEASE_NOTES.md](RELEASE_NOTES.md)
@@ -164,12 +166,18 @@ tail -f logs/frontend.log  # Frontend logs
 **...start using the application quickly**
 → Read [README.md](README.md) - Section "Installation"
 
+**...set up Oracle user and permissions**
+→ Read [DATABASE_SETUP.md](DATABASE_SETUP.md)
+
+**...integrate with the backend API or debug endpoints**
+→ Read [API_REFERENCE.md](API_REFERENCE.md)
+
 ---
 
 ## 💡 Tips
 
 1. **Start with README.md** for a complete overview
-2. **Installation.md** has step-by-step installation instructions
+2. **INSTALLATION.md** has step-by-step installation instructions
 3. **Feature-specific guides** provide detailed instructions for specific features
 4. **All scripts** have built-in help messages
 
@@ -184,5 +192,5 @@ For issues or questions:
 
 ---
 
-**Ready to start?** → [Installation.md](Installation.md) 🚀
+**Ready to start?** → [INSTALLATION.md](INSTALLATION.md) 🚀
 

@@ -1,6 +1,6 @@
 # Release Notes
 
-## Version 1.5.0 (March 16, 2026)
+## Version 1.5.0 (May 4, 2026)
 
 🎯 **Major Update: Enhanced Outbound Server Monitoring, Connection Management & Standalone Monitor Script**
 
@@ -82,11 +82,40 @@
 - **Backward Compatible**: All existing features continue to work
 - **No Breaking Changes**: Existing queries enhanced, not replaced
 
+#### 🧮 OJET Estimated Parameters Calculator
+- **New Planning Tool**: Capacity estimation calculator added to both Validation PROD and Validation Downstream pages
+- **Inputs**: Average Row Length (bytes) and Row Changes per Transaction
+- **Real-Time Calculations**:
+  - **Raw Data Size (GB)**: `ROUND(2.16 * (RC/1M) + (AvgRowLen * RC) / 1GB, 1)`
+  - **Min STREAMS_POOL_SIZE (GB)**: Raw Data Size × 1.10 (no rounding)
+  - **TransactionBufferSpilloverCount**: Row Changes × 1.25
+  - **TransactionAgeSpilloverLimit**: Fixed 8,000 (2-hour transaction window)
+- **Tooltip Documentation**: ⓘ icons on each field explain the formula source and how to obtain input values
+
+#### 🔧 Table Instantiation Input Format Improvement
+- **Unified Input**: Table Owner and Table Names fields consolidated into a single `SCHEMA.TABLE` input separated by `;`
+- **Multi-Owner Support**: Different schemas can be specified per table (e.g., `HR.EMPLOYEES;SALES.ORDERS`)
+- **Auto-Uppercase**: Input is automatically converted to uppercase
+- **Format Validation**: Invalid Oracle identifiers are caught and reported before query execution
+
+### 🐛 Bug Fixes
+- **Monitor Copy Button**: Fixed `setCopiedCommand` undefined error that caused copy-to-clipboard to crash
+- **Table Input Parser**: Improved whitespace handling around dot separator (`SCHEMA . TABLE` now parses correctly)
+- **Text Corrections**: "XStream pipeline" renamed to "OJET pipeline" in Ojet Queries documentation
+- **STRIIM$ Filter Removed**: Archive Logs cleanup query now shows all captures regardless of naming convention
+- **Connection Test**: `/api/test-connection` now uses `getOrCreatePool()` for consistent pool management
+
+### 🔒 Security Improvements
+- **Oracle Identifier Validation**: Schema and table names validated against Oracle naming rules before SQL construction
+- **Auth Log Cleanup**: Removed verbose authentication debug logs (username/token details no longer logged in production)
+- **Environment-Based Logging**: New `log.debug()` / `log.info()` / `log.error()` helpers — debug output suppressed when `NODE_ENV=production`
+
 ### 🔄 Migration Notes
 - **No Action Required**: Existing installations work as-is
 - **New Features**: Disconnect button and enhanced monitoring available immediately
 - **Monitor Script**: Extract Monitor_Ojet.sh from package root for standalone use
 - **Database Permissions**: Same permissions required as v1.4.0
+- **Table Instantiation Input**: Fields changed — enter `SCHEMA.TABLE;SCHEMA.TABLE` instead of separate owner/table fields
 
 ---
 

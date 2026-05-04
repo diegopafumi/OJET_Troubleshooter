@@ -124,6 +124,19 @@ function jsonToTable(data) {
 app.use(cors());
 app.use(express.json());
 
+// Log level helper — only verbose in development
+const isDev = process.env.NODE_ENV !== 'production';
+const log = {
+  info:  (...args) => console.log('[INFO]', ...args),
+  error: (...args) => console.error('[ERROR]', ...args),
+  debug: (...args) => { if (isDev) console.log('[DEBUG]', ...args); }
+};
+
+// Validate Oracle identifier (schema/table name)
+function isValidOracleIdentifier(name) {
+  return /^[A-Z_$#][A-Z0-9_$#]*$/i.test(name);
+}
+
 // Oracle connection pools - support multiple connections
 let pool = null; // Legacy pool for backward compatibility
 const connectionPools = new Map(); // Map to store multiple connection pools
@@ -151,7 +164,7 @@ async function initializePool(config) {
 
     return { success: true, message: 'Connection pool created successfully' };
   } catch (error) {
-    console.error('Error creating connection pool:', error);
+    log.error('Error creating connection pool:', error.message);
     return { success: false, message: error.message };
   }
 }
@@ -177,34 +190,33 @@ async function getOrCreatePool(config) {
     });
 
     connectionPools.set(poolKey, newPool);
-    console.log(`Created new connection pool for ${poolKey}`);
+    log.info(`Created new connection pool for ${poolKey}`);
     return newPool;
   } catch (error) {
-    console.error('Error creating connection pool:', error);
+    log.error('Error creating connection pool:', error.message);
     throw error;
   }
 }
 
 // Test database connection
 app.post('/api/test-connection', async (req, res) => {
+  let connection;
   try {
     const { host, port, sid, username, password } = req.body;
-    
-    const result = await initializePool({ host, port, sid, username, password });
-    
-    if (result.success) {
-      // Test the connection
-      const connection = await pool.getConnection();
-      await connection.execute('SELECT 1 FROM DUAL');
-      await connection.close();
-      
-      res.json({ success: true, message: 'Connection successful' });
-    } else {
-      res.status(500).json({ success: false, message: result.message });
-    }
+
+    const poolToUse = await getOrCreatePool({ host, port, sid, username, password });
+    connection = await poolToUse.getConnection();
+    await connection.execute('SELECT 1 FROM DUAL');
+
+    log.info(`Connection test successful: ${host}:${port}/${sid}`);
+    res.json({ success: true, message: 'Connection successful' });
   } catch (error) {
-    console.error('Connection test failed:', error);
+    log.error('Connection test failed:', error.message);
     res.status(500).json({ success: false, message: error.message });
+  } finally {
+    if (connection) {
+      try { await connection.close(); } catch (e) { log.error('Error closing connection:', e.message); }
+    }
   }
 });
 
@@ -319,10 +331,17 @@ app.post('/api/check/table-instantiation', async (req, res) => {
       });
     }
 
-    const tablePairs = tables.split(';').map(t => {
+    const parsedPairs = tables.split(';').map(t => {
       const [owner, table] = t.trim().split('.');
-      return `('${owner.trim().toUpperCase()}', '${table.trim().toUpperCase()}')`;
-    }).join(', ');
+      return { owner: (owner || '').trim().toUpperCase(), table: (table || '').trim().toUpperCase() };
+    }).filter(p => p.owner && p.table);
+
+    const invalidPairs = parsedPairs.filter(p => !isValidOracleIdentifier(p.owner) || !isValidOracleIdentifier(p.table));
+    if (invalidPairs.length > 0) {
+      return res.status(400).json({ success: false, message: `Invalid identifier(s): ${invalidPairs.map(p => `${p.owner}.${p.table}`).join(', ')}` });
+    }
+
+    const tablePairs = parsedPairs.map(p => `('${p.owner}', '${p.table}')`).join(', ');
 
     const query = `
       SELECT TABLE_OWNER, TABLE_NAME, TIMESTAMP, scn as SCN_TO_START_TABLE
@@ -370,15 +389,22 @@ app.post('/api/check/scn-validation', async (req, res) => {
       });
     }
 
-    const tablePairs = tables.split(';').map(t => {
+    const parsedPairs2 = tables.split(';').map(t => {
       const [owner, table] = t.trim().split('.');
-      return `('${owner.trim().toUpperCase()}', '${table.trim().toUpperCase()}')`;
-    }).join(', ');
+      return { owner: (owner || '').trim().toUpperCase(), table: (table || '').trim().toUpperCase() };
+    }).filter(p => p.owner && p.table);
+
+    const invalidPairs2 = parsedPairs2.filter(p => !isValidOracleIdentifier(p.owner) || !isValidOracleIdentifier(p.table));
+    if (invalidPairs2.length > 0) {
+      return res.status(400).json({ success: false, message: `Invalid identifier(s): ${invalidPairs2.map(p => `${p.owner}.${p.table}`).join(', ')}` });
+    }
+
+    const tablePairs2 = parsedPairs2.map(p => `('${p.owner}', '${p.table}')`).join(', ');
 
     const query = `
       SELECT MAX(SCN) as MAX_SCN
       FROM DBA_CAPTURE_PREPARED_TABLES
-      WHERE (TABLE_OWNER, TABLE_NAME) IN (${tablePairs})
+      WHERE (TABLE_OWNER, TABLE_NAME) IN (${tablePairs2})
     `;
 
     connection = await poolToUse.getConnection();
@@ -682,9 +708,9 @@ app.post('/api/monitor-source', async (req, res) => {
         validateStatus: () => true // Accept any status code
       });
       baseUrlReachable = true;
-      console.log(`Server responded with status: ${healthCheck.status}`);
+      log.debug(`Server responded with status: ${healthCheck.status}`);
     } catch (healthError) {
-      console.error(`Server not reachable:`, healthError.message);
+      log.error(`Server not reachable:`, healthError.message);
 
       if (healthError.code === 'ECONNREFUSED') {
         return res.status(503).json({
@@ -710,12 +736,7 @@ app.post('/api/monitor-source', async (req, res) => {
       const authUrl = `${striimUrl}/security/authenticate`;
       const authData = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
 
-      console.log(`\n=== AUTHENTICATION REQUEST ===`);
-      console.log(`URL: ${authUrl}`);
-      console.log(`Method: POST`);
-      console.log(`Content-Type: application/x-www-form-urlencoded`);
-      console.log(`Data: username=${username}&password=***`);
-      console.log(`==============================\n`);
+      log.debug(`Authenticating with Striim: ${authUrl} (user: ${username})`);
 
       const authResponse = await axios.post(
         authUrl,
@@ -729,12 +750,6 @@ app.post('/api/monitor-source', async (req, res) => {
         }
       );
 
-      console.log(`\n=== AUTHENTICATION RESPONSE ===`);
-      console.log(`Status: ${authResponse.status}`);
-      console.log(`Headers:`, authResponse.headers);
-      console.log(`Data:`, authResponse.data);
-      console.log(`===============================\n`);
-
       authToken = authResponse.data.token;
 
       if (!authToken) {
@@ -744,22 +759,12 @@ app.post('/api/monitor-source', async (req, res) => {
         });
       }
 
-      console.log('Authentication successful, token received');
+      log.info('Striim authentication successful');
     } catch (authError) {
-      console.error(`\n=== AUTHENTICATION ERROR ===`);
-      console.error(`Message: ${authError.message}`);
-      console.error(`Code: ${authError.code}`);
-      console.error(`URL: ${striimUrl}/security/authenticate`);
-
+      log.error(`Striim authentication failed: ${authError.message} (code: ${authError.code})`);
       if (authError.response) {
-        console.error(`Response Status: ${authError.response.status}`);
-        console.error(`Response Headers:`, authError.response.headers);
-        console.error(`Response Data:`, authError.response.data);
-      } else if (authError.request) {
-        console.error(`No response received`);
-        console.error(`Request:`, authError.request);
+        log.debug(`Auth error response status: ${authError.response.status}`);
       }
-      console.error(`============================\n`);
 
       let errorMessage = 'Authentication failed';
 
@@ -1565,7 +1570,6 @@ app.post('/api/ojet-queries/arch-log-cleanup', async (req, res) => {
         ELSE 'KEEP_-_CAPTURE_NEEDS_THIS'
     END AS ACTION
 FROM DBA_REGISTERED_ARCHIVED_LOG l, DBA_CAPTURE c
-WHERE c.CAPTURE_NAME like 'STRIIM$%'
 ORDER BY l.SEQUENCE# DESC
 FETCH FIRST 100 ROWS ONLY`;
 

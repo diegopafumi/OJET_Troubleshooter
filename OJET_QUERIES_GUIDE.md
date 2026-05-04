@@ -210,6 +210,19 @@ Fill in the Oracle database connection details in the sidebar:
 2. **Permissions**: User must have SELECT privileges on V$ and DBA_ views
 3. **Network**: Ensure network connectivity to Oracle database
 
+### RAC Environments
+
+Queries 5 (Long Running Transactions) and 6 (Check Data Transport) use `GV$` views which query all RAC instances. In RAC environments, the Oracle user requires additional grants:
+
+```sql
+-- Required for GV$ access on RAC
+GRANT SELECT ON gv$transaction TO <username>;
+GRANT SELECT ON gv$session TO <username>;
+GRANT SELECT ON gv$propagation_receiver TO <username>;
+```
+
+In single-instance environments these queries fall back to the equivalent `V$` views automatically. No action needed for non-RAC databases.
+
 ---
 
 ## 🐛 Troubleshooting

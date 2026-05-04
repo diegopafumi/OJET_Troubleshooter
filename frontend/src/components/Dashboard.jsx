@@ -409,7 +409,9 @@ order by name;`
         <div className="card" style={{ maxWidth: '680px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
             <div className="form-group">
-              <label style={{ fontSize: '13px', fontWeight: '600' }}>Average Row Length (Bytes)</label>
+              <label style={{ fontSize: '13px', fontWeight: '600' }}>Average Row Length (Bytes)
+                <span title="Average byte size per row. Check dba_tables.AVG_ROW_LEN." style={{ marginLeft: '6px', cursor: 'help', color: '#6b7280', fontSize: '12px' }}>ⓘ</span>
+              </label>
               <input
                 type="number"
                 min="0"
@@ -434,7 +436,9 @@ order by name;`
 
           <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <div style={{ padding: '14px', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
-              <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Raw Data Size (GB)</div>
+              <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Raw Data Size (GB)
+                <span title="Formula: 2.16*(RC/1M) + (AvgRowLen*RC)/1GB. The 2.16 coefficient accounts for XStream capture overhead (LogMiner, LCR headers, metadata). Source: Striim sizing guidelines." style={{ marginLeft: '4px', cursor: 'help', fontStyle: 'normal', textTransform: 'none' }}>ⓘ</span>
+              </div>
               <div style={{ fontSize: '22px', fontWeight: '700', color: '#15803d' }}>
                 {rawDataSizeGB !== null ? rawDataSizeGB.toFixed(1) : '—'}
               </div>

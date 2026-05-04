@@ -1,6 +1,6 @@
 # OJET Troubleshooter
 
-**Version 1.5.0** - March 16, 2026
+**Version 1.5.0** - May 4, 2026
 
 This is an application for technical diagnosis and validation of Oracle OJET.
 
@@ -85,6 +85,16 @@ This is an application for technical diagnosis and validation of Oracle OJET.
   - `show <source> status details` - Detailed status with SCN and metrics
   - `show <source> memory` - Memory usage summary
   - `show <source> memory details` - Detailed memory breakdown with explanations
+
+### 🧮 OJET Estimated Parameters Calculator
+- **Capacity Planning Tool**: Available at the bottom of Validation PROD and Validation Downstream pages
+- **Inputs**: Average Row Length (bytes) and number of Row Changes per Transaction
+- **Calculated Outputs** (updated in real-time):
+  - **Raw Data Size (GB)**: Total capture data volume estimate
+  - **Min STREAMS_POOL_SIZE (GB)**: Minimum recommended `streams_pool_size` Oracle parameter (Raw Data × 1.10)
+  - **TransactionBufferSpilloverCount**: Recommended Striim parameter (Row Changes × 1.25)
+  - **TransactionAgeSpilloverLimit**: Fixed value of 8,000 (covers ~2 hours of transactions)
+- **Tooltip Documentation**: ⓘ icons explain each field and formula source
 
 ### 📊 OJET Queries
 - **Direct Oracle Database Queries**: Execute pre-configured queries for OJET monitoring
@@ -232,13 +242,14 @@ npm run dev
 ## 📖 Usage
 
 ### Navigation
-The application has 6 main pages accessible from the top navigation bar:
+The application has 7 main pages accessible from the top navigation bar:
 - **Validation PROD**: Technical validations for production database (single database)
 - **Validation Downstream**: Technical validations for downstream scenarios (dual database)
 - **Troubleshooting**: Common problems and solutions
 - **Show Commands**: OJET command reference with field explanations
 - **Add/Remove Tables**: Step-by-step guides for table management
 - **Monitor**: Real-time OJET source monitoring via Striim REST API
+- **Ojet Queries**: Pre-configured Oracle queries for OJET monitoring and troubleshooting
 
 ### Page: OJET Validation PROD
 

@@ -17,6 +17,7 @@ function Monitor() {
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState(null)
   const [error, setError] = useState('')
+  const [copiedCommand, setCopiedCommand] = useState(false)
 
   // Save values to localStorage whenever they change
   useEffect(() => {
