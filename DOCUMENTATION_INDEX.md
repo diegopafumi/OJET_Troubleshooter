@@ -18,8 +18,6 @@ Welcome to the OJET Troubleshooter documentation! This index will help you find 
 | Document | Description | When to Read |
 |----------|-------------|--------------|
 | **[REMOTE_ACCESS.md](REMOTE_ACCESS.md)** | Access from remote machines | Setting up remote access |
-| **[DATABASE_SETUP.md](DATABASE_SETUP.md)** | Oracle user creation and privilege grants | Before first database connection |
-| **[API_REFERENCE.md](API_REFERENCE.md)** | Backend REST API endpoint documentation | Building integrations or debugging API |
 
 ---
 
@@ -165,12 +163,6 @@ tail -f logs/frontend.log  # Frontend logs
 
 **...start using the application quickly**
 → Read [README.md](README.md) - Section "Installation"
-
-**...set up Oracle user and permissions**
-→ Read [DATABASE_SETUP.md](DATABASE_SETUP.md)
-
-**...integrate with the backend API or debug endpoints**
-→ Read [API_REFERENCE.md](API_REFERENCE.md)
 
 ---
 
