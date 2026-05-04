@@ -57,6 +57,7 @@ function Dashboard({ dbConfig, setDbConfig, isConnected, setIsConnected }) {
       iconColor: '#2563eb',
       endpoint: '/api/check/dictionary-dumps',
       requiresParams: false,
+      dbConnection: 'prod',
       query: `-- If Arch Log Files are "crossed" (BEGIN = Y in 1 row and END=Y on the previous row),
 -- that is fine, perhaps BUILD was not able to fit in 1 ARCH LOG FILE
 
@@ -78,6 +79,7 @@ ORDER BY SEQUENCE# DESC;`
       endpoint: '/api/action/build-dictionary',
       requiresParams: false,
       isAction: true,
+      dbConnection: 'prod',
       query: `-- This will be executed:
 EXECUTE DBMS_LOGMNR_D.BUILD(
   options => DBMS_LOGMNR_D.STORE_IN_REDO_LOGS
@@ -98,6 +100,7 @@ EXECUTE DBMS_LOGMNR_D.BUILD(
       iconColor: '#10b981',
       endpoint: '/api/check/table-instantiation',
       requiresParams: true,
+      dbConnection: 'prod',
       params: [
         { name: 'tables', label: 'Tables (owner.table separated by ;)', placeholder: 'SCHEMA1.TABLE1;SCHEMA1.TABLE2', uppercase: true }
       ],
@@ -120,6 +123,7 @@ WHERE (TABLE_OWNER, TABLE_NAME) IN (:tables);`,
       iconColor: '#f59e0b',
       endpoint: '/api/check/scn-validation',
       requiresParams: true,
+      dbConnection: 'prod',
       params: [
         { name: 'tables', label: 'Tables (owner.table separated by ;)', placeholder: 'SCHEMA1.TABLE1;SCHEMA1.TABLE2', uppercase: true }
       ],
@@ -136,6 +140,7 @@ WHERE (TABLE_OWNER, TABLE_NAME) IN (:tables);`
       iconColor: '#ef4444',
       endpoint: '/api/check/open-transactions',
       requiresParams: false,
+      dbConnection: 'prod',
       query: `SELECT MIN(START_TIME) as MIN_START_TIME,
        MIN(START_SCN) as MIN_START_SCN,
        COUNT(*) as OPEN_TXN_COUNT
@@ -150,6 +155,7 @@ FROM GV$TRANSACTION;`
       iconColor: '#9333ea',
       endpoint: '/api/check/db-values',
       requiresParams: false,
+      dbConnection: 'prod',
       query: `SELECT name,value from v$parameter
 where name in ('db_name','db_unique_name','log_archive_dest_1','enable_goldengate_replication', 'log_archive_dest_2','log_archive_dest_state_1','log_archive_dest_state_2','log_archive_dest_state_3','log_archive_dest_state_4','fal_client','fal_server','standby_file_management','dg_broker_start','dg_broker_config_file1','dg_broker_config_file2','log_archive_config','service_names','streams_pool_size')
 and value is not null
@@ -395,6 +401,7 @@ order by name;`
             key={check.id}
             check={check}
             isConnected={isConnected}
+            dbConfigProd={dbConfig}
           />
         ))}
       </div>

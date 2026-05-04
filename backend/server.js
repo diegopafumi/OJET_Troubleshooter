@@ -141,9 +141,10 @@ function isValidOracleIdentifier(name) {
 let pool = null; // Legacy pool for backward compatibility
 const connectionPools = new Map(); // Map to store multiple connection pools
 
-// Generate a unique key for a database configuration
+// Generate a unique key for a database configuration (includes password so stale pools
+// with old credentials are never silently reused after a password change)
 function getPoolKey(config) {
-  return `${config.host}:${config.port}/${config.sid}/${config.username}`;
+  return `${config.host}:${config.port}/${config.sid}/${config.username}/${config.password}`;
 }
 
 // Initialize Oracle connection pool
@@ -171,19 +172,28 @@ async function initializePool(config) {
 
 // Get or create a connection pool for a specific database configuration
 async function getOrCreatePool(config) {
-  const poolKey = getPoolKey(config);
+  const cleanConfig = {
+    host:     (config.host     || '').trim(),
+    port:     (config.port     || '').trim(),
+    sid:      (config.sid      || '').trim(),
+    username: (config.username || '').trim(),
+    password: (config.password || '')          // don't trim — spaces in passwords are valid
+  };
+
+  const poolKey = getPoolKey(cleanConfig);
 
   // Check if pool already exists
   if (connectionPools.has(poolKey)) {
     return connectionPools.get(poolKey);
   }
 
-  // Create new pool
+  // Create new pool — poolMin:1 ensures wrong credentials fail fast at createPool()
+  // so a broken pool is never cached
   try {
     const newPool = await oracledb.createPool({
-      user: config.username,
-      password: config.password,
-      connectString: `${config.host}:${config.port}/${config.sid}`,
+      user: cleanConfig.username,
+      password: cleanConfig.password,
+      connectString: `${cleanConfig.host}:${cleanConfig.port}/${cleanConfig.sid}`,
       poolMin: 1,
       poolMax: 5,
       poolIncrement: 1
